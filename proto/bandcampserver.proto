@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package bandcampserver;
+
+option go_package = "github.com/brotherlogic/bandcampserver/proto";
+
+import "github.com/brotherlogic/bandcamplib/proto/bandcamp.proto";
+
+message Config {
+  string token = 1;
+  int64 last_token_refresh = 2;
+  repeated bandcamplib.Item items = 3;
+}
+
+message SetTokenRequest {
+  string token = 1;
+}
+
+message SetTokenResponse {}
+
+service BandcampServerService {
+  rpc SetToken(SetTokenRequest) returns (SetTokenResponse) {};
+}
