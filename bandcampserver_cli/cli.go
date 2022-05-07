@@ -21,7 +21,7 @@ func main() {
 	}
 	defer conn.Close()
 
-	client := pb.NewBandcampServerServieClient(conn)
+	client := pb.NewBandcampServerServiceClient(conn)
 
 	switch os.Args[1] {
 	case "token":
