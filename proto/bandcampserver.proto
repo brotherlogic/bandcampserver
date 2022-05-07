@@ -10,6 +10,7 @@ message Config {
   string token = 1;
   int64 last_token_refresh = 2;
   repeated bandcamplib.Item items = 3;
+  map<int64, int32> mapping = 4;
 }
 
 message SetTokenRequest {

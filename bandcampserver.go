@@ -120,6 +120,10 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	count.Set(float64(len(config.GetItems())))
 	tokenAge.Set(float64(config.GetLastTokenRefresh()))
 
+	if config.Mapping == nil {
+		config.Mapping = make(map[int64]int32)
+	}
+
 	return config, nil
 }
 
