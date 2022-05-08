@@ -8,8 +8,9 @@ import (
 
 	"github.com/brotherlogic/bandcamplib"
 	"github.com/brotherlogic/bandcamplib/proto"
+
+	pb "github.com/brotherlogic/bandcampserver/proto"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
-	pb "github.com/brotherlogic/recordsorg/proto"
 )
 
 //ClientUpdate on an updated record

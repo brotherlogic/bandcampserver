@@ -16,11 +16,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	pb "github.com/brotherlogic/bandcampserver/proto"
 	dspb "github.com/brotherlogic/dstore/proto"
 	pbg "github.com/brotherlogic/goserver/proto"
 	"github.com/brotherlogic/goserver/utils"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
-	pb "github.com/brotherlogic/recordsorg/proto"
 
 	google_protobuf "github.com/golang/protobuf/ptypes/any"
 )
