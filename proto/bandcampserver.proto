@@ -19,6 +19,14 @@ message SetTokenRequest {
 
 message SetTokenResponse {}
 
+message AddMappingRequest {
+  int64 bandcamp_id = 1;
+  int32 discogs_id = 2;
+}
+
+message AddMappingResponse {}
+
 service BandcampServerService {
   rpc SetToken(SetTokenRequest) returns (SetTokenResponse) {};
+  rpc AddMapping(AddMappingRequest) returns (AddMappingResponse) {};
 }

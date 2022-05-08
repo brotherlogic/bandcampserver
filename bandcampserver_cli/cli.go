@@ -33,5 +33,15 @@ func main() {
 			_, err := client.SetToken(ctx, &pb.SetTokenRequest{Token: *token})
 			fmt.Printf("Set token: %v\n", err)
 		}
+	case "mapping":
+		mappingFlags := flag.NewFlagSet("Mapping", flag.ExitOnError)
+		var bc = mappingFlags.Int64("bandcamp", -1, "Bandcamp in")
+		var dc = mappingFlags.Int("discogs", -1, "Discogs Id")
+		if err := mappingFlags.Parse(os.Args[2:]); err == nil {
+			_, err := client.AddMapping(ctx, &pb.AddMappingRequest{BandcampId: *bc, DiscogsId: int32(*dc)})
+			if err != nil {
+				fmt.Printf("Mapping problem: %v", err)
+			}
+		}
 	}
 }

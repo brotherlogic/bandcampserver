@@ -48,3 +48,14 @@ func (s *Server) SetToken(ctx context.Context, req *pb.SetTokenRequest) (*pb.Set
 
 	return nil, s.saveConfig(ctx, config)
 }
+
+func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb.AddMappingResponse, error) {
+	config, err := s.loadConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
+
+	return nil, s.saveConfig(ctx, config)
+}
