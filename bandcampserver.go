@@ -183,13 +183,13 @@ func main() {
 	server.PrepServer()
 	server.Register = server
 
-	err := server.RegisterServerV2("recordsorg", false, true)
+	err := server.RegisterServerV2("bandcampserver", false, true)
 	if err != nil {
 		return
 	}
 
 	// Preload metrics
-	ctx, cancel := utils.ManualContext("recordsorg-init", time.Minute)
+	ctx, cancel := utils.ManualContext("bandcampserver-init", time.Minute)
 	_, err = server.loadConfig(ctx)
 	if err != nil {
 		cancel()
