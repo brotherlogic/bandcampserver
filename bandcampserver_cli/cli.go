@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -29,7 +30,8 @@ func main() {
 		var token = tokenFlags.String("token", "", "Token")
 
 		if err := tokenFlags.Parse(os.Args[2:]); err == nil {
-			client.SetToken(ctx, &pb.SetTokenRequest{Token: *token})
+			_, err := client.SetToken(ctx, &pb.SetTokenRequest{Token: *token})
+			fmt.Printf("Set token: %v\n", err)
 		}
 	}
 }
