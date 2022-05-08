@@ -22,7 +22,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 	for _, item := range config.Items {
 		if _, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
-			s.RaiseIssue("Bandcamp entry missing mapping", fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()))
+			s.RaiseIssue("Bandcamp entry is missing mapping", fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()))
 			return &rcpb.ClientUpdateResponse{}, nil
 		}
 	}
