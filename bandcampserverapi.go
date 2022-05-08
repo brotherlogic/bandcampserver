@@ -46,7 +46,7 @@ func (s *Server) SetToken(ctx context.Context, req *pb.SetTokenRequest) (*pb.Set
 
 	config.Items = items
 
-	return nil, s.saveConfig(ctx, config)
+	return &pb.SetTokenResponse{}, s.saveConfig(ctx, config)
 }
 
 func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb.AddMappingResponse, error) {
@@ -57,5 +57,5 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 
 	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
 
-	return nil, s.saveConfig(ctx, config)
+	return &pb.AddMappingResponse{}, s.saveConfig(ctx, config)
 }
