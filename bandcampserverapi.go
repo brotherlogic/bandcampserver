@@ -22,7 +22,14 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 	for _, item := range config.Items {
 		if _, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
-			s.RaiseIssue("Bandcamp entry is missing mapping", fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()))
+			if config.IssueIds[item.GetAlbumId()] == 0 {
+				issue, err := s.ImmediateIssue(ctx, "Bandcamp entry is missing mapping", fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()))
+				if err != nil {
+					return nil, err
+				}
+				config.IssueIds[item.GetAlbumId()] = issue.GetNumber()
+				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
+			}
 			return &rcpb.ClientUpdateResponse{}, nil
 		}
 	}
@@ -56,6 +63,10 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 	}
 
 	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
+
+	if config.IssueIds[req.GetBandcampId()] > 0 {
+		s.DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
+	}
 
 	return &pb.AddMappingResponse{}, s.saveConfig(ctx, config)
 }

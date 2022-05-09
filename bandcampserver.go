@@ -123,6 +123,9 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	if config.Mapping == nil {
 		config.Mapping = make(map[int64]int32)
 	}
+	if config.IssueIds == nil {
+		config.IssueIds = make(map[int64]int32)
+	}
 
 	return config, nil
 }
