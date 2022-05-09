@@ -43,5 +43,10 @@ func main() {
 				fmt.Printf("Mapping problem: %v", err)
 			}
 		}
+	case "reset":
+		_, err := client.Reset(ctx, &pb.ResetRequest{})
+		if err != nil {
+			log.Fatalf("Error in reset: %v", err)
+		}
 	}
 }

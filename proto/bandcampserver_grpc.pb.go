@@ -19,6 +19,7 @@ const _ = grpc.SupportPackageIsVersion7
 type BandcampServerServiceClient interface {
 	SetToken(ctx context.Context, in *SetTokenRequest, opts ...grpc.CallOption) (*SetTokenResponse, error)
 	AddMapping(ctx context.Context, in *AddMappingRequest, opts ...grpc.CallOption) (*AddMappingResponse, error)
+	Reset(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*ResetResponse, error)
 }
 
 type bandcampServerServiceClient struct {
@@ -47,12 +48,22 @@ func (c *bandcampServerServiceClient) AddMapping(ctx context.Context, in *AddMap
 	return out, nil
 }
 
+func (c *bandcampServerServiceClient) Reset(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*ResetResponse, error) {
+	out := new(ResetResponse)
+	err := c.cc.Invoke(ctx, "/bandcampserver.BandcampServerService/Reset", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BandcampServerServiceServer is the server API for BandcampServerService service.
 // All implementations should embed UnimplementedBandcampServerServiceServer
 // for forward compatibility
 type BandcampServerServiceServer interface {
 	SetToken(context.Context, *SetTokenRequest) (*SetTokenResponse, error)
 	AddMapping(context.Context, *AddMappingRequest) (*AddMappingResponse, error)
+	Reset(context.Context, *ResetRequest) (*ResetResponse, error)
 }
 
 // UnimplementedBandcampServerServiceServer should be embedded to have forward compatible implementations.
@@ -64,6 +75,9 @@ func (UnimplementedBandcampServerServiceServer) SetToken(context.Context, *SetTo
 }
 func (UnimplementedBandcampServerServiceServer) AddMapping(context.Context, *AddMappingRequest) (*AddMappingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AddMapping not implemented")
+}
+func (UnimplementedBandcampServerServiceServer) Reset(context.Context, *ResetRequest) (*ResetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Reset not implemented")
 }
 
 // UnsafeBandcampServerServiceServer may be embedded to opt out of forward compatibility for this service.
@@ -113,6 +127,24 @@ func _BandcampServerService_AddMapping_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BandcampServerService_Reset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BandcampServerServiceServer).Reset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/bandcampserver.BandcampServerService/Reset",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BandcampServerServiceServer).Reset(ctx, req.(*ResetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _BandcampServerService_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "bandcampserver.BandcampServerService",
 	HandlerType: (*BandcampServerServiceServer)(nil),
@@ -124,6 +156,10 @@ var _BandcampServerService_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AddMapping",
 			Handler:    _BandcampServerService_AddMapping_Handler,
+		},
+		{
+			MethodName: "Reset",
+			Handler:    _BandcampServerService_Reset_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

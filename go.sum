@@ -75,8 +75,8 @@ github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6r
 github.com/bgentry/speakeasy v0.1.0/go.mod h1:+zsyZBPWlz7T6j88CTgSN5bM796AkVf0kBD4zp0CCIs=
 github.com/brotherlogic/backup v0.0.0-20211031003304-0cb73ad241d3/go.mod h1:Pdp0CgsA9VYkdTnHS30HD1ums8PlC0AImzAb7ATly6Q=
 github.com/brotherlogic/backup v0.0.0-20211120222615-6a5907691138/go.mod h1:mrLND+DWWC5tTNIUUDzcXUUbWjXPittcDXL5/yx1XCg=
-github.com/brotherlogic/bandcamplib v0.0.0-20220508002537-e166ffaca910 h1:WfdxWaiHF/3vdDYeAkA/7Z25MuF5FpaTbvB5rVoWd2s=
-github.com/brotherlogic/bandcamplib v0.0.0-20220508002537-e166ffaca910/go.mod h1:DOhLLUQBhxhD8M/Z0LJb+WVFA5pNulF7+pqgRgSiC84=
+github.com/brotherlogic/bandcamplib v0.0.0-20220509171355-0558fec3a8df h1:Fpu0a/n+zGQtNb0fFSYpDb/EAnVkKIJPTjrZxxEDaK4=
+github.com/brotherlogic/bandcamplib v0.0.0-20220509171355-0558fec3a8df/go.mod h1:DOhLLUQBhxhD8M/Z0LJb+WVFA5pNulF7+pqgRgSiC84=
 github.com/brotherlogic/buildserver v0.0.0-20201019183109-5b9d0c13b530/go.mod h1:ZAwx2ZhsKIo+MaMpoN7T8d3dgHO8mjCFDPB4wMBIFlE=
 github.com/brotherlogic/buildserver v0.0.0-20210310012628-b12a393fe88a/go.mod h1:ZAwx2ZhsKIo+MaMpoN7T8d3dgHO8mjCFDPB4wMBIFlE=
 github.com/brotherlogic/buildserver v0.0.0-20210311141809-ebce0d8f1d09/go.mod h1:ZAwx2ZhsKIo+MaMpoN7T8d3dgHO8mjCFDPB4wMBIFlE=

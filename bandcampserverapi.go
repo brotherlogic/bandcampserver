@@ -70,3 +70,14 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 
 	return &pb.AddMappingResponse{}, s.saveConfig(ctx, config)
 }
+
+func (s *Server) Reset(ctx context.Context, req *pb.ResetRequest) (*pb.ResetResponse, error) {
+	config, err := s.loadConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	config.IssueIds = make(map[int64]int32)
+
+	return &pb.ResetResponse{}, s.saveConfig(ctx, config)
+}
