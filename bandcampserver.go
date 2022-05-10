@@ -135,7 +135,7 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	done.Set(float64(dc))
 	count.Set(float64(len(config.GetItems())))
 	tokenAge.Set(float64(config.GetLastTokenRefresh()))
-	monthPerc.Set(float64(time.Now().Day() / 30))
+	monthPerc.Set(float64(time.Now().Day()) / 30.0)
 
 	if config.Mapping == nil {
 		config.Mapping = make(map[int64]int32)
