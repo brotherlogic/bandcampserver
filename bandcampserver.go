@@ -44,7 +44,7 @@ var (
 		Help: "The size of the tracking queue",
 	})
 	monthPerc = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "bandcampserver_token_age",
+		Name: "bandcampserver_month",
 		Help: "The size of the tracking queue",
 	})
 )
