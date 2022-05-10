@@ -43,6 +43,10 @@ var (
 		Name: "bandcampserver_token_age",
 		Help: "The size of the tracking queue",
 	})
+	monthPerc = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_token_age",
+		Help: "The size of the tracking queue",
+	})
 )
 
 //Server main server type
@@ -131,6 +135,7 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	done.Set(float64(dc))
 	count.Set(float64(len(config.GetItems())))
 	tokenAge.Set(float64(config.GetLastTokenRefresh()))
+	monthPerc.Set(float64(time.Now().Day() / 30))
 
 	if config.Mapping == nil {
 		config.Mapping = make(map[int64]int32)
