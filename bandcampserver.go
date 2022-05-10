@@ -35,6 +35,10 @@ var (
 		Name: "bandcampserver_count",
 		Help: "The size of the tracking queue",
 	})
+	done = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_done",
+		Help: "The size of the tracking queue",
+	})
 	tokenAge = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "bandcampserver_token_age",
 		Help: "The size of the tracking queue",
@@ -117,6 +121,14 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 		return nil, err
 	}
 
+	dc := 0
+	for _, item := range config.GetItems() {
+		if config.GetMapping()[item.GetAlbumId()] > 0 {
+			dc++
+		}
+	}
+
+	done.Set(float64(dc))
 	count.Set(float64(len(config.GetItems())))
 	tokenAge.Set(float64(config.GetLastTokenRefresh()))
 
