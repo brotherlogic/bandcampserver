@@ -21,7 +21,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	}
 
 	for _, item := range config.Items {
-		if _, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
+		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v", item.GetAlbumId(), item))
 			if config.IssueIds[item.GetAlbumId()] == 0 {
 				issue, err := s.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping", item.GetBandName()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()))
@@ -32,6 +32,33 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 			}
 			return &rcpb.ClientUpdateResponse{}, nil
+		} else {
+			found := false
+			conn, err := s.FDialServer(ctx, "recordcollection")
+			if err != nil {
+				return nil, err
+			}
+			defer conn.Close()
+
+			client := rcpb.NewRecordCollectionServiceClient(conn)
+			iids, err := client.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{val}})
+			if err != nil {
+				return nil, err
+			}
+			for _, iid := range iids.GetInstanceIds() {
+				rec, err := client.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: iid})
+				if err != nil {
+					return nil, err
+				}
+
+				if rec.GetRecord().GetMetadata().GetGoalFolder() == 1782105 {
+					found = true
+				}
+			}
+
+			if !found {
+				s.RaiseIssue("Bandcamp not added", fmt.Sprintf("%v has not been added...yet", val))
+			}
 		}
 	}
 
