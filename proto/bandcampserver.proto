@@ -12,6 +12,7 @@ message Config {
   repeated bandcamplib.Item items = 3;
   map<int64, int32> mapping = 4;
   map<int64, int32> issue_ids = 5;
+  map<int32, int64> added_date = 6;
 }
 
 message SetTokenRequest {

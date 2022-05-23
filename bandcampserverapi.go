@@ -10,6 +10,7 @@ import (
 	"github.com/brotherlogic/bandcamplib/proto"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
+	rcgd "github.com/brotherlogic/godiscogs"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
 )
 
@@ -57,7 +58,27 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			}
 
 			if !found {
-				s.RaiseIssue("Bandcamp not added", fmt.Sprintf("%v has not been added...yet", val))
+				if config.AddedDate[val] > 0 {
+					s.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v at %v", val, config.AddedDate[val]))
+					return nil, fmt.Errorf("Oveerlap issue")
+				}
+				_, err := client.AddRecord(ctx, &rcpb.AddRecordRequest{
+					ToAdd: &rcpb.Record{
+						Release: &rcgd.Release{
+							Id: val,
+						},
+						Metadata: &rcpb.ReleaseMetadata{
+							Cost: 1,
+						},
+					},
+				})
+
+				if err != nil {
+					return nil, err
+				}
+
+				config.AddedDate[val] = time.Now().Unix()
+				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 			}
 		}
 	}
