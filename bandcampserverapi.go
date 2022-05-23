@@ -50,7 +50,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 			}
 			return &rcpb.ClientUpdateResponse{}, nil
-		} else {
+		} else if val > 0 {
 			found := false
 			conn, err := s.FDialServer(ctx, "recordcollection")
 			if err != nil {
@@ -76,7 +76,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 			if !found {
 				if config.AddedDate[val] > 0 {
-					s.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v at %v", val, config.AddedDate[val]))
+					s.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v from %v at %v", val, item, config.AddedDate[val]))
 					return nil, fmt.Errorf("Oveerlap issue")
 				}
 				_, err := client.AddRecord(ctx, &rcpb.AddRecordRequest{
