@@ -144,6 +144,10 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 		config.IssueIds = make(map[int64]int32)
 	}
 
+	if config.AddedDate == nil {
+		config.AddedDate = make(map[int32]int64)
+	}
+
 	return config, nil
 }
 
