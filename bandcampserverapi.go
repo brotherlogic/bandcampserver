@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/brotherlogic/bandcamplib"
 	"github.com/brotherlogic/bandcamplib/proto"
@@ -13,6 +15,21 @@ import (
 	rcgd "github.com/brotherlogic/godiscogs"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
 )
+
+func (s *Server) Lookup(ctx context.Context, req *pb.LookupRequest) (*pb.LookupResponse, error) {
+	config, err := s.loadConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range config.Items {
+		if item.AlbumId == req.GetBandcampId() {
+			return &pb.LookupResponse{Bandcamp: item}, nil
+		}
+	}
+
+	return nil, status.Errorf(codes.NotFound, fmt.Sprintf("Could not find %v", req))
+}
 
 //ClientUpdate on an updated record
 func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest) (*rcpb.ClientUpdateResponse, error) {

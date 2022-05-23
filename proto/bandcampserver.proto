@@ -31,8 +31,17 @@ message AddMappingResponse {}
 message ResetRequest {}
 message ResetResponse {}
 
+message LookupRequest{
+  int64 bandcamp_id = 1;
+}
+
+message LookupResponse {
+  bandcamplib.Item bandcamp = 1;
+}
+
 service BandcampServerService {
   rpc SetToken(SetTokenRequest) returns (SetTokenResponse) {};
   rpc AddMapping(AddMappingRequest) returns (AddMappingResponse) {};
   rpc Reset(ResetRequest) returns (ResetResponse) {};
+  rpc Lookup(LookupRequest) returns (LookupResponse) {};
 }

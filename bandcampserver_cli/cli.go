@@ -25,6 +25,14 @@ func main() {
 	client := pb.NewBandcampServerServiceClient(conn)
 
 	switch os.Args[1] {
+	case "lookup":
+		lookupFlags := flag.NewFlagSet("Lookup", flag.ExitOnError)
+		var id = lookupFlags.Int64("id", -1, "ID")
+
+		if err := lookupFlags.Parse(os.Args[2:]); err == nil {
+			r, err := client.Lookup(ctx, &pb.LookupRequest{BandcampId: *id})
+			fmt.Printf("Response: %v -> %v\n", r, err)
+		}
 	case "token":
 		tokenFlags := flag.NewFlagSet("Token", flag.ExitOnError)
 		var token = tokenFlags.String("token", "", "Token")

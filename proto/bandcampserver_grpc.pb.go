@@ -20,6 +20,7 @@ type BandcampServerServiceClient interface {
 	SetToken(ctx context.Context, in *SetTokenRequest, opts ...grpc.CallOption) (*SetTokenResponse, error)
 	AddMapping(ctx context.Context, in *AddMappingRequest, opts ...grpc.CallOption) (*AddMappingResponse, error)
 	Reset(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*ResetResponse, error)
+	Lookup(ctx context.Context, in *LookupRequest, opts ...grpc.CallOption) (*LookupResponse, error)
 }
 
 type bandcampServerServiceClient struct {
@@ -57,6 +58,15 @@ func (c *bandcampServerServiceClient) Reset(ctx context.Context, in *ResetReques
 	return out, nil
 }
 
+func (c *bandcampServerServiceClient) Lookup(ctx context.Context, in *LookupRequest, opts ...grpc.CallOption) (*LookupResponse, error) {
+	out := new(LookupResponse)
+	err := c.cc.Invoke(ctx, "/bandcampserver.BandcampServerService/Lookup", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BandcampServerServiceServer is the server API for BandcampServerService service.
 // All implementations should embed UnimplementedBandcampServerServiceServer
 // for forward compatibility
@@ -64,6 +74,7 @@ type BandcampServerServiceServer interface {
 	SetToken(context.Context, *SetTokenRequest) (*SetTokenResponse, error)
 	AddMapping(context.Context, *AddMappingRequest) (*AddMappingResponse, error)
 	Reset(context.Context, *ResetRequest) (*ResetResponse, error)
+	Lookup(context.Context, *LookupRequest) (*LookupResponse, error)
 }
 
 // UnimplementedBandcampServerServiceServer should be embedded to have forward compatible implementations.
@@ -78,6 +89,9 @@ func (UnimplementedBandcampServerServiceServer) AddMapping(context.Context, *Add
 }
 func (UnimplementedBandcampServerServiceServer) Reset(context.Context, *ResetRequest) (*ResetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Reset not implemented")
+}
+func (UnimplementedBandcampServerServiceServer) Lookup(context.Context, *LookupRequest) (*LookupResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Lookup not implemented")
 }
 
 // UnsafeBandcampServerServiceServer may be embedded to opt out of forward compatibility for this service.
@@ -145,6 +159,24 @@ func _BandcampServerService_Reset_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BandcampServerService_Lookup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BandcampServerServiceServer).Lookup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/bandcampserver.BandcampServerService/Lookup",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BandcampServerServiceServer).Lookup(ctx, req.(*LookupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _BandcampServerService_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "bandcampserver.BandcampServerService",
 	HandlerType: (*BandcampServerServiceServer)(nil),
@@ -160,6 +192,10 @@ var _BandcampServerService_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Reset",
 			Handler:    _BandcampServerService_Reset_Handler,
+		},
+		{
+			MethodName: "Lookup",
+			Handler:    _BandcampServerService_Lookup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
