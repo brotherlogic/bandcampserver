@@ -51,7 +51,6 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			}
 			return &rcpb.ClientUpdateResponse{}, nil
 		} else if val > 0 && config.AddedDate[val] == 0 {
-			found := false
 			conn, err := s.FDialServer(ctx, "recordcollection")
 			if err != nil {
 				return nil, err
@@ -70,38 +69,36 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				}
 
 				if rec.GetRecord().GetMetadata().GetGoalFolder() == 1782105 {
-					found = true
 					config.AddedDate[val] = time.Now().Unix()
+					return nil, s.saveConfig(ctx, config)
 				}
 			}
 
-			if !found {
-				if config.AddedDate[val] > 0 {
-					s.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v from %v at %v", val, item, config.AddedDate[val]))
-					return nil, fmt.Errorf("Oveerlap issue")
-				}
-				_, err := client.AddRecord(ctx, &rcpb.AddRecordRequest{
-					ToAdd: &rcpb.Record{
-						Release: &rcgd.Release{
-							Id: val,
-						},
-						Metadata: &rcpb.ReleaseMetadata{
-							Cost:           1,
-							GoalFolder:     1782105,
-							PurchaseBudget: "float",
-							FiledUnder:     rcpb.ReleaseMetadata_FILE_DIGITAL,
-							DateArrived:    time.Now().Unix(),
-						},
+			if config.AddedDate[val] > 0 {
+				s.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v from %v at %v", val, item, config.AddedDate[val]))
+				return nil, fmt.Errorf("Oveerlap issue")
+			}
+			_, err = client.AddRecord(ctx, &rcpb.AddRecordRequest{
+				ToAdd: &rcpb.Record{
+					Release: &rcgd.Release{
+						Id: val,
 					},
-				})
+					Metadata: &rcpb.ReleaseMetadata{
+						Cost:           1,
+						GoalFolder:     1782105,
+						PurchaseBudget: "float",
+						FiledUnder:     rcpb.ReleaseMetadata_FILE_DIGITAL,
+						DateArrived:    time.Now().Unix(),
+					},
+				},
+			})
 
-				if err != nil {
-					return nil, err
-				}
-
-				config.AddedDate[val] = time.Now().Unix()
-				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
+			if err != nil {
+				return nil, err
 			}
+
+			config.AddedDate[val] = time.Now().Unix()
+			return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 		}
 	}
 
