@@ -50,7 +50,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 			}
 			return &rcpb.ClientUpdateResponse{}, nil
-		} else if val > 0 {
+		} else if val > 0 && config.AddedDate[val] == 0 {
 			found := false
 			conn, err := s.FDialServer(ctx, "recordcollection")
 			if err != nil {
@@ -71,6 +71,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 				if rec.GetRecord().GetMetadata().GetGoalFolder() == 1782105 {
 					found = true
+					config.AddedDate[val] = time.Now().Unix()
 				}
 			}
 
