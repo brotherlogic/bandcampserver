@@ -214,11 +214,12 @@ func main() {
 
 	// Preload metrics
 	ctx, cancel := utils.ManualContext("bandcampserver-init", time.Minute)
-	_, err = server.loadConfig(ctx)
+	config, err := server.loadConfig(ctx)
 	if err != nil {
 		cancel()
 		log.Fatalf("Unable to load initial cache: %v", err)
 	}
+	server.metrics(ctx, config)
 	cancel()
 
 	fmt.Printf("%v", server.Serve())
