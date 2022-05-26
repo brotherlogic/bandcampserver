@@ -148,6 +148,8 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 		config.AddedDate = make(map[int32]int64)
 	}
 
+	s.metrics(ctx, config)
+
 	return config, nil
 }
 
