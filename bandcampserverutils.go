@@ -22,7 +22,14 @@ var (
 )
 
 func (s *Server) metrics(ctx context.Context, config *pb.Config) {
-	perc.Set(float64(len(config.GetMapping())) / float64(len(config.GetItems())))
+	dc := float64(0)
+	for _, item := range config.GetItems() {
+		if config.GetMapping()[item.GetAlbumId()] > 0 {
+			dc++
+		}
+	}
+
+	perc.Set(dc / float64(len(config.GetItems())))
 
 	last14 := float64(0)
 	for _, elem := range config.GetAddedDate() {
