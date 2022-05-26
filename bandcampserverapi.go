@@ -70,7 +70,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 				if rec.GetRecord().GetMetadata().GetGoalFolder() == 1782105 {
 					config.AddedDate[val] = time.Now().Unix()
-					return nil, s.saveConfig(ctx, config)
+					return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 				}
 			}
 
