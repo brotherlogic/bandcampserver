@@ -38,6 +38,12 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		return nil, err
 	}
 
+	// Only do 5 of these per day
+	last := s.metrics(ctx, config)
+	if last >= 5 {
+		return &rcpb.ClientUpdateResponse{}, nil
+	}
+
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v", item.GetAlbumId(), item))

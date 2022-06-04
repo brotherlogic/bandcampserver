@@ -25,7 +25,7 @@ var (
 	})
 )
 
-func (s *Server) metrics(ctx context.Context, config *pb.Config) {
+func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	dc := float64(0)
 	for _, item := range config.GetItems() {
 		if config.GetMapping()[item.GetAlbumId()] > 0 {
@@ -52,4 +52,5 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) {
 	end.Set(float64(ftime.Unix()))
 	today.Set(float64(last24))
 
+	return int(last24)
 }
