@@ -27,6 +27,10 @@ var (
 		Name: "bandcampserver_togo",
 		Help: "The size of the tracking queue",
 	})
+	perDay = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_per_day",
+		Help: "The size of the tracking queue",
+	})
 )
 
 func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
@@ -50,6 +54,7 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 		}
 	}
 	compPerDay := last14 / 14
+	perDay.Set(compPerDay)
 	togo := float64(len(config.GetItems()) - len(config.GetMapping()))
 	toGo.Set(float64(togo))
 	days := togo / compPerDay
