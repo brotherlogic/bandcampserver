@@ -4,14 +4,14 @@ go 1.16
 
 require (
 	github.com/brotherlogic/bandcamplib v0.0.0-20220509215244-2d866ff9042d
-	github.com/brotherlogic/discovery v0.0.0-20221031213054-36b7b87796f5 // indirect
-	github.com/brotherlogic/dstore v0.0.0-20221031172026-be30c3d8b9f5
+	github.com/brotherlogic/dstore v0.0.0-20221128045205-6bc0372f1fde
 	github.com/brotherlogic/godiscogs v0.0.0-20221025153630-9ad31d9fab21
-	github.com/brotherlogic/goserver v0.0.0-20221031171938-7e6e97b25ba1
-	github.com/brotherlogic/recordcollection v0.0.0-20221031211817-b7d8ea05621c
+	github.com/brotherlogic/goserver v0.0.0-20221106165541-0672428e3628
+	github.com/brotherlogic/lock v0.0.0-20221128045455-ec7c856627c4 // indirect
+	github.com/brotherlogic/recordcollection v0.0.0-20221128045336-378b07c7ad7e
 	github.com/golang/protobuf v1.5.2
-	github.com/prometheus/client_golang v1.13.0
-	golang.org/x/net v0.1.0
-	google.golang.org/grpc v1.50.1
+	github.com/prometheus/client_golang v1.14.0
+	golang.org/x/net v0.2.0
+	google.golang.org/grpc v1.51.0
 	google.golang.org/protobuf v1.28.1
 )
