@@ -1267,8 +1267,9 @@ github.com/brotherlogic/lock v0.0.0-20221211020737-76774cf470a8/go.mod h1:G+mVqj
 github.com/brotherlogic/lock v0.0.0-20221211025725-c7b14345e31e/go.mod h1:Zt0+McpcdFrB80i4Kea2Tltf80BkwMszrHE4ekuQCx4=
 github.com/brotherlogic/lock v0.0.0-20221218032010-bc171297cf57/go.mod h1:wI4eBT9sp/eZPjqKJsCXkB0AwihhOPzS2SYv08YqEvs=
 github.com/brotherlogic/lock v0.0.0-20221218033100-bd36d25fa713/go.mod h1:M1ATO4baOmq/yl4uCACn9Yssspghg0nmu0xYmu4h6+g=
-github.com/brotherlogic/lock v0.0.0-20221225035925-d74ed6ee07de h1:aYHKdFOftkF4W2Yxd5YhFZaNtWnliN31lj1eNZ28qlc=
 github.com/brotherlogic/lock v0.0.0-20221225035925-d74ed6ee07de/go.mod h1:uIWxze6UNqjXpC1VWFgmK6seI1vvzec0CPeqHWRm/+Y=
+github.com/brotherlogic/lock v0.0.0-20221225042207-74c46cc25b55 h1:xz8yh0VJn+jAyUdCiVocGrmZv+NZoE8b4IQb28TgDSQ=
+github.com/brotherlogic/lock v0.0.0-20221225042207-74c46cc25b55/go.mod h1:Lzv/K0uTcdB9b+ZxdEqmMSw7eSAtiA/RuzrreScg28k=
 github.com/brotherlogic/logging v0.0.0-20200903150238-67a07e215efe/go.mod h1:cHEM7v1fl8VwwyN4qcrh8hQHR+XNT+xHI4+yOr4l8Wg=
 github.com/brotherlogic/logging v0.0.0-20210606012857-db059830d1dc/go.mod h1:FOXFywySb2dOOhsEFIwxniCxGJltgA395Dhzp2lFXYI=
 github.com/brotherlogic/logging v0.0.0-20210609015032-e6d0ef792137/go.mod h1:FOXFywySb2dOOhsEFIwxniCxGJltgA395Dhzp2lFXYI=
