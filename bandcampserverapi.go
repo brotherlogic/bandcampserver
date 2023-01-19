@@ -88,7 +88,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 					Metadata: &rcpb.ReleaseMetadata{
 						Cost:           1,
 						GoalFolder:     1782105,
-						PurchaseBudget: "float",
+						PurchaseBudget: fmt.Sprintf("float%v", time.Now().Year()),
 						FiledUnder:     rcpb.ReleaseMetadata_FILE_DIGITAL,
 						DateArrived:    time.Now().Unix(),
 					},
