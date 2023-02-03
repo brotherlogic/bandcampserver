@@ -44,7 +44,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v", item.GetAlbumId(), item))
 			if config.IssueIds[item.GetAlbumId()] == 0 {
-				issue, err := s.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping", item.GetBandName()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false)
+				issue, err := s.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false)
 				if err != nil {
 					return nil, err
 				}
