@@ -109,7 +109,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		}
 	}
 
-	return nil, fmt.Errorf("Unable to proecss bandcamp (from %v entries)", len(config.GetItems()))
+	return &rcpb.ClientUpdateResponse{}, nil
 }
 
 func (s *Server) SetToken(ctx context.Context, req *pb.SetTokenRequest) (*pb.SetTokenResponse, error) {
