@@ -12,7 +12,7 @@ import (
 	"github.com/brotherlogic/bandcamplib/proto"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
-	rcgd "github.com/brotherlogic/godiscogs"
+	rcgd "github.com/brotherlogic/godiscogs/proto"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
 )
 
@@ -42,15 +42,14 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
-			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
-
 			// Skip processing when we've done 6 in a day
 			if today >= 6 {
 				continue
 			}
+			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
 
 			if config.IssueIds[item.GetAlbumId()] == 0 {
-				issue, err := s.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false)
+				issue, err := s.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false, false)
 				if err != nil {
 					return nil, err
 				}
