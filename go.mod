@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/brotherlogic/bandcamplib v0.0.0-20230119162530-0db89854781a
-	github.com/brotherlogic/dstore v0.0.0-20230317231856-c90da309158a
+	github.com/brotherlogic/dstore v0.0.0-20230324233904-06f9042586bc
 	github.com/brotherlogic/godiscogs v0.0.0-20230320190117-75d09ac07100
 	github.com/brotherlogic/goserver v0.0.0-20230309052710-27200cfe2365
 	github.com/brotherlogic/recordcollection v0.0.0-20230319235047-96f1445dfc71
@@ -24,7 +24,7 @@ require (
 	github.com/brotherlogic/gobuildslave v0.0.0-20230318230807-fadde5728fcb // indirect
 	github.com/brotherlogic/keystore v0.0.0-20230319014539-e7c4ab53847d // indirect
 	github.com/brotherlogic/lock v0.0.0-20230323184541-53d2034bc232 // indirect
-	github.com/brotherlogic/logging v0.0.0-20230324052453-5cee77983a2d // indirect
+	github.com/brotherlogic/logging v0.0.0-20230324234709-e22452965b17 // indirect
 	github.com/brotherlogic/monitor v0.0.0-20221025152653-c10877c5f9e6 // indirect
 	github.com/brotherlogic/versionserver v0.0.0-20221025154054-c9bcd41be2f2 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
