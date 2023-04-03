@@ -45,6 +45,12 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		return nil, err
 	}
 
+	// Validate the config on each successful pass
+	err = s.validate(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check that this record is correct from bandcamp point of view
 	if record.Record.GetRelease().GetFolderId() == 1782105 {
 		found := false

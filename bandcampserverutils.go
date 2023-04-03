@@ -6,6 +6,7 @@ import (
 	"golang.org/x/net/context"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
+	rcpb "github.com/brotherlogic/recordcollection/proto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -63,4 +64,25 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	today.Set(float64(last24))
 
 	return int(last24)
+}
+
+func (s *Server) validate(ctx context.Context, config *pb.Config) error {
+	for id, mid := range config.GetMapping() {
+		// Validate once per week
+		if val, ok := config.GetLastValidateDate()[id]; !ok || time.Since(time.Unix(val, 0)) > time.Hour*24*7 {
+			res, err := s.rcclient.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{mid}})
+			if err != nil {
+				return err
+			}
+
+			if len(res.GetInstanceIds()) == 0 {
+				delete(config.Mapping, id)
+			}
+
+			config.LastValidateDate[id] = time.Now().Unix()
+			return nil
+		}
+	}
+
+	return nil
 }
