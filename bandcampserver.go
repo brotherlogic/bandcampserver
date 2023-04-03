@@ -22,6 +22,8 @@ import (
 	"github.com/brotherlogic/goserver/utils"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
 
+	recordcollection_client "github.com/brotherlogic/recordcollection/client"
+
 	google_protobuf "github.com/golang/protobuf/ptypes/any"
 )
 
@@ -49,9 +51,10 @@ var (
 	})
 )
 
-//Server main server type
+// Server main server type
 type Server struct {
 	*goserver.GoServer
+	rcclient *recordcollection_client.RecordCollectionClient
 }
 
 // Init builds the server
@@ -59,6 +62,7 @@ func Init() *Server {
 	s := &Server{
 		GoServer: &goserver.GoServer{},
 	}
+	s.rcclient = &recordcollection_client.RecordCollectionClient{Gs: s}
 	return s
 }
 
