@@ -13,6 +13,7 @@ message Config {
   map<int64, int32> mapping = 4;
   map<int64, int32> issue_ids = 5;
   map<int32, int64> added_date = 6;
+  map<int64, int64> last_validate_date = 7;
 }
 
 message SetTokenRequest {

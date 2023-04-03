@@ -4,8 +4,11 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
+	rcpb "github.com/brotherlogic/recordcollection/proto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -63,4 +66,21 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	today.Set(float64(last24))
 
 	return int(last24)
+}
+
+func (s *Server) validate(ctx context.Context, config *pb.Config) error {
+	for id, mid := range config.GetMapping() {
+		// Validate once per week
+		if val, ok := config.GetLastValidateDate()[id]; !ok || time.Since(time.Unix(val, 0)) > time.Hour*24*7 {
+			_, err := s.rcclient.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: mid})
+			if status.Code(err) == codes.OutOfRange {
+				delete(config.Mapping, id)
+			}
+
+			config.LastValidateDate[id] = time.Now().Unix()
+			return nil
+		}
+	}
+
+	return nil
 }
