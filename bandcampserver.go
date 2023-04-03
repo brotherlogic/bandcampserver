@@ -62,7 +62,7 @@ func Init() *Server {
 	s := &Server{
 		GoServer: &goserver.GoServer{},
 	}
-	s.rcclient = &recordcollection_client.RecordCollectionClient{Gs: s}
+	s.rcclient = &recordcollection_client.RecordCollectionClient{Gs: s.GoServer}
 	return s
 }
 
