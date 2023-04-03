@@ -4,8 +4,6 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
@@ -72,8 +70,12 @@ func (s *Server) validate(ctx context.Context, config *pb.Config) error {
 	for id, mid := range config.GetMapping() {
 		// Validate once per week
 		if val, ok := config.GetLastValidateDate()[id]; !ok || time.Since(time.Unix(val, 0)) > time.Hour*24*7 {
-			_, err := s.rcclient.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: mid})
-			if status.Code(err) == codes.OutOfRange {
+			res, err := s.rcclient.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{mid}})
+			if err != nil {
+				return err
+			}
+
+			if len(res.GetInstanceIds()) == 0 {
 				delete(config.Mapping, id)
 			}
 
