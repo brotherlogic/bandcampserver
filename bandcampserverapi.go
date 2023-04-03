@@ -31,7 +31,7 @@ func (s *Server) Lookup(ctx context.Context, req *pb.LookupRequest) (*pb.LookupR
 	return nil, status.Errorf(codes.NotFound, fmt.Sprintf("Could not find %v", req))
 }
 
-//ClientUpdate on an updated record
+// ClientUpdate on an updated record
 func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest) (*rcpb.ClientUpdateResponse, error) {
 	config, err := s.loadConfig(ctx)
 	if err != nil {
@@ -39,6 +39,26 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	}
 
 	today := s.metrics(ctx, config)
+
+	record, err := s.rcclient.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: req.GetInstanceId()})
+	if err != nil {
+		return nil, err
+	}
+
+	// Check that this record is correct from bandcamp point of view
+	if record.Record.GetRelease().GetFolderId() == 1782105 {
+		found := false
+		for _, format := range record.GetRecord().GetRelease().GetFormats() {
+			if format.GetName() == "File" {
+				found = true
+			}
+		}
+
+		if !found {
+			// This can be deleted?
+			s.RaiseIssue("Can we delete", fmt.Sprintf("https://www.discogs.com/madeup/release/%v", record.GetRecord().GetRelease().GetId()))
+		}
+	}
 
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
