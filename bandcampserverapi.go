@@ -45,6 +45,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		if status.Code(err) != codes.OutOfRange {
 			return nil, err
 		}
+		return &rcpb.ClientUpdateResponse{}, nil
 	}
 
 	// Validate the config on each successful pass
