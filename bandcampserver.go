@@ -49,6 +49,10 @@ var (
 		Name: "bandcampserver_month",
 		Help: "The size of the tracking queue",
 	})
+	dates = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_dates",
+		Help: "The size of the tracking queue",
+	})
 )
 
 // Server main server type

@@ -63,6 +63,8 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	end.Set(float64(ftime.Unix()))
 	today.Set(float64(last24))
 
+	dates.Set(float64(len(config.GetAddedDate())))
+
 	return int(last24)
 }
 
