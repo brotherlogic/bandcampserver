@@ -42,7 +42,9 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 	record, err := s.rcclient.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: req.GetInstanceId()})
 	if err != nil {
-		return nil, err
+		if status.Code(err) != codes.OutOfRange {
+			return nil, err
+		}
 	}
 
 	// Validate the config on each successful pass
