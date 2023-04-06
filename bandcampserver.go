@@ -168,7 +168,6 @@ func (s *Server) saveConfig(ctx context.Context, config *pb.Config) error {
 	if err != nil {
 		return err
 	}
-	config.AddedDate = make(map[int32]int64)
 	return s.save(ctx, data, CONFIG_KEY)
 }
 
