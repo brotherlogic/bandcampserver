@@ -31,7 +31,7 @@ func main() {
 
 		if err := lookupFlags.Parse(os.Args[2:]); err == nil {
 			r, err := client.Lookup(ctx, &pb.LookupRequest{BandcampId: *id})
-			fmt.Printf("Response: %v -> %v\n", r, err)
+			fmt.Printf("Lookup Response: %v -> %v\n", r, err)
 		}
 	case "token":
 		tokenFlags := flag.NewFlagSet("Token", flag.ExitOnError)
