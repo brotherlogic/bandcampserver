@@ -155,6 +155,8 @@ func (s *Server) SetToken(ctx context.Context, req *pb.SetTokenRequest) (*pb.Set
 		return nil, err
 	}
 
+	s.CtxLog(ctx, fmt.Sprintf("Read %v items", len(items)))
+
 	config.Items = items
 
 	return &pb.SetTokenResponse{}, s.saveConfig(ctx, config)
