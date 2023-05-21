@@ -231,6 +231,7 @@ func main() {
 		cancel()
 		log.Fatalf("Unable to load initial cache: %v", err)
 	}
+	server.CtxLog(ctx, fmt.Sprintf("Loaded with %v items", len(config.GetItems())))
 	server.metrics(ctx, config)
 	cancel()
 
