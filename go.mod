@@ -6,7 +6,7 @@ require (
 	github.com/brotherlogic/bandcamplib v0.0.0-20230119162530-0db89854781a
 	github.com/brotherlogic/dstore v0.0.0-20230721175313-57a2f0e39bcf
 	github.com/brotherlogic/godiscogs v0.0.0-20230530030232-e7e2f67fbe33
-	github.com/brotherlogic/goserver v0.0.0-20230619155835-969c746dba11
+	github.com/brotherlogic/goserver v0.0.0-20230726200050-779ae6811580
 	github.com/brotherlogic/recordcollection v0.0.0-20230721165634-4d4b33803b79
 	github.com/golang/protobuf v1.5.3
 	github.com/prometheus/client_golang v1.16.0
