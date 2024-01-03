@@ -73,7 +73,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			// Skip processing when we've done 4 in a day
-			if today >= 4 {
+			if today >= 7 {
 				continue
 			}
 			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
