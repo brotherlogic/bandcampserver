@@ -73,7 +73,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			// Skip processing when we've done 4 in a day
-			if today >= 7 {
+			if today >= 7 || time.Since(time.Unix(config.GetLastProcess(), 0)) < time.Hour {
 				continue
 			}
 			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
@@ -174,6 +174,8 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 	if config.IssueIds[req.GetBandcampId()] > 0 {
 		s.DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
 	}
+
+	config.LastProcess = time.Now().Unix()
 
 	return &pb.AddMappingResponse{}, s.saveConfig(ctx, config)
 }
