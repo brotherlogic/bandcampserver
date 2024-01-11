@@ -173,7 +173,10 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
 
 	if config.IssueIds[req.GetBandcampId()] > 0 {
-		s.DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
+		err := s.DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
+		if err != nil {
+			return nil, fmt.Errorf("unable to remove issue: %w", err)
+		}
 	}
 
 	config.LastProcess = time.Now().Unix()
