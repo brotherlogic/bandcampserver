@@ -6,7 +6,7 @@ toolchain go1.23.0
 
 require (
 	github.com/brotherlogic/bandcamplib v0.0.0-20230119162530-0db89854781a
-	github.com/brotherlogic/dstore v0.0.0-20240830195421-227c0ab999f8
+	github.com/brotherlogic/dstore v0.0.0-20240906201402-0021f357ba60
 	github.com/brotherlogic/godiscogs v0.0.0-20240823195726-9a8d322e6898
 	github.com/brotherlogic/goserver v0.0.0-20240826215223-fccbac46b3d4
 	github.com/brotherlogic/recordcollection v0.0.0-20240830204116-1797a369f404
