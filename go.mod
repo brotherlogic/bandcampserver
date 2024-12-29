@@ -4,10 +4,10 @@ go 1.23.2
 
 require (
 	github.com/brotherlogic/bandcamplib v0.0.0-20230119162530-0db89854781a
-	github.com/brotherlogic/dstore v0.0.0-20241229031407-ae1d9603cf00
+	github.com/brotherlogic/dstore v0.0.0-20241229041506-9dc9a1ae66a7
 	github.com/brotherlogic/godiscogs v0.0.0-20240823195726-9a8d322e6898
 	github.com/brotherlogic/goserver v0.0.0-20240826215223-fccbac46b3d4
-	github.com/brotherlogic/recordcollection v0.0.0-20241229031313-7d584d716385
+	github.com/brotherlogic/recordcollection v0.0.0-20241229041403-38a7d39c969b
 	github.com/golang/protobuf v1.5.4
 	github.com/prometheus/client_golang v1.20.5
 	golang.org/x/net v0.33.0
