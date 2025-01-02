@@ -160,6 +160,8 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 
 	s.metrics(ctx, config)
 
+	s.CtxLog(ctx, fmt.Sprintf("Got token: %v", config.GetToken()))
+
 	return config, nil
 }
 
