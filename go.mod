@@ -4,7 +4,7 @@ go 1.23.2
 
 require (
 	github.com/brotherlogic/bandcamplib v0.0.0-20230119162530-0db89854781a
-	github.com/brotherlogic/dstore v0.0.0-20250225075507-36e72d54649f
+	github.com/brotherlogic/dstore v0.0.0-20250301002520-817a76991675
 	github.com/brotherlogic/godiscogs v0.0.0-20250131163651-1e34c776a68e
 	github.com/brotherlogic/goserver v0.0.0-20250123145056-95c6fbb2310a
 	github.com/brotherlogic/recordcollection v0.0.0-20250227174213-ce20ec909d87
