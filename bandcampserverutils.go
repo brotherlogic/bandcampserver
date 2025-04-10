@@ -56,7 +56,13 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	}
 	compPerDay := last14 / 14
 	perDay.Set(compPerDay)
-	togo := float64(len(config.GetItems()) - len(config.GetMapping()))
+
+	togo := float64(0)
+	for _, item := range config.GetItems() {
+		if _, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
+			togo++
+		}
+	}
 	toGo.Set(float64(togo))
 	days := togo / compPerDay
 	ftime := time.Now().Add(time.Hour * time.Duration(24*days))
