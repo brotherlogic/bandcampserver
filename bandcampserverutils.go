@@ -32,6 +32,8 @@ var (
 		Name: "bandcampserver_per_day",
 		Help: "The size of the tracking queue",
 	})
+	completion = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_completion"})
 )
 
 func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
@@ -70,6 +72,17 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	today.Set(float64(last24))
 
 	dates.Set(float64(len(config.GetAddedDate())))
+
+	// Use a two week window
+	done := 0
+	for _, item := range config.GetAddedDate() {
+		if time.Since(time.Unix(item, 0)) < time.Hour*24*14 {
+			done++
+		}
+	}
+	perDay := float64(done) / 14
+	daysToGo := togo / perDay
+	completion.Set(float64(time.Now().Add(time.Hour * time.Duration(24*daysToGo)).Unix()))
 
 	return int(last24)
 }

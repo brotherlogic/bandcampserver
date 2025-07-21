@@ -28,7 +28,7 @@ func (s *Server) Lookup(ctx context.Context, req *pb.LookupRequest) (*pb.LookupR
 		}
 	}
 
-	return nil, status.Errorf(codes.NotFound, fmt.Sprintf("Could not find %v", req))
+	return nil, status.Errorf(codes.NotFound, "Could not find %v", req)
 }
 
 // ClientUpdate on an updated record
