@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/brotherlogic/goserver/utils"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
+		pbrc "github.com/brotherlogic/recordcollection/proto"
 )
 
 func main() {
@@ -56,5 +58,13 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error in reset: %v", err)
 		}
+			case "ping":
+		id, _ := strconv.ParseInt(os.Args[2], 10, 32)
+		sclient := pbrc.NewClientUpdateServiceClient(conn)
+		_, err = sclient.ClientUpdate(ctx, &pbrc.ClientUpdateRequest{InstanceId: int32(id)})
+		if err != nil {
+			log.Fatalf("Error on GET: %v", err)
+		}
+
 	}
 }
