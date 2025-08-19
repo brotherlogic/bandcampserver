@@ -235,7 +235,15 @@ func main() {
 	}
 	server.CtxLog(ctx, fmt.Sprintf("Loaded with %v items", len(config.GetItems())))
 	server.metrics(ctx, config)
+
+	_, err = server.SetToken(ctx, &pb.SetTokenRequest{Token: fmt.Sprintf("%v::a::", time.Now().Unix())})
+	if err != nil {
+		log.Fatalf("Bad token set: %v", err)
+	}
+
 	cancel()
+
+	server.SetToken(ctx, &pb.SetTokenRequest{Token: config.GetToken()})
 
 	fmt.Printf("%v", server.Serve())
 }
