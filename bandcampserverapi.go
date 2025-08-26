@@ -74,7 +74,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			// Skip processing when we've done 20 in a day
 			if time.Since(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 {
-				s.CtxLog(ctx, fmt.Sprintf("Waiting for %v or %v", today, time.Since(time.Unix(config.GetLastProcess(), 0))))
+				s.CtxLog(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, time.Since(time.Unix(config.GetLastProcess(), 0))))
 				continue
 			}
 			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
