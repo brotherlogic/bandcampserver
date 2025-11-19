@@ -73,7 +73,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			// Skip processing when we've done 20 in a day
-			if time.Since(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 {
+			if time.Since(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 || today >= 5 {
 				s.CtxLog(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, time.Since(time.Unix(config.GetLastProcess(), 0))))
 				continue
 			}
