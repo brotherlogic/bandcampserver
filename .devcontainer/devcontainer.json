@@ -1,0 +1,44 @@
+{
+    "name": "Bandcampserver",
+    "image": "mcr.microsoft.com/devcontainers/base:noble",
+    "features": {
+        "ghcr.io/devcontainers/features/go:1": {},
+        "ghcr.io/nils-geistmann/devcontainers-features/zsh:0": {},
+        "ghcr.io/siri404/devcontainer-ai-features/gemini-cli:1": {},
+        "ghcr.io/devcontainers/features/common-utils": "2",
+        "ghcr.io/devcontainers-extra/features/protoc:1": {},
+        "ghcr.io/devcontainers/features/github-cli:1": {
+            "version": "latest",
+            "installDirectlyFromGitHubRelease": true
+        }
+    },
+    "postCreateCommand": "./postCreate.sh",
+    "initializeCommand": "cat ~/.seraphine-automation > .devcontainer/.env.auth",
+    "containerEnv": {
+        "GH_GIT_PROTOCOL": "ssh",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8",
+        "TZ": "America/Los_Angeles"
+    },
+    "remoteOTEL.enabled": true,
+    "forwardPorts": [],
+    "runArgs": [
+        "--security-opt",
+        "label=disable",
+        "--env-file",
+        "${localWorkspaceFolder}/.devcontainer/.env.auth"
+    ],
+    "mounts": [
+        {
+            "source": "${localEnv:HOME}/.ssh",
+            "target": "/home/vscode/.ssh",
+            "type": "bind",
+            "options": "readonly"
+        },
+        "source=/var/run/dbus,target=/var/run/dbus,type=bind",
+        "source=/run/user,target=/run/user,type=bind",
+        "source=${localEnv:HOME}/.gemini,target=/home/vscode/.gemini,type=bind"
+    ],
+    "workspaceFolder": "/workspaces/bandcampserver"
+}

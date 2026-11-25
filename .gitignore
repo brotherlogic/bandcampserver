@@ -1,1 +1,7 @@
 bandcampserver
+*~
+*#
+.test*
+vendor/
+.antigravitycli
+.devcontainer/.env.auth
