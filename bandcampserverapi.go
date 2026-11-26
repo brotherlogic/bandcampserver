@@ -119,6 +119,8 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				}
 
 				if errors.Is(err, bandcamplib.ErrAuthenticationRequired) || errors.Is(err, bandcamplib.ErrAuthenticationFailed) {
+					sanitizedErr := sanitizeError(err, initialCookie, config.GetIdentityCookie())
+					s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v due to authentication error: %v", albumID, sanitizedErr))
 					reason := "Bandcamp session cookie expired or was rejected while resolving WAV download link."
 					if errors.Is(err, bandcamplib.ErrAuthenticationRequired) {
 						reason = "Bandcamp session cookie is missing while resolving WAV download link."
@@ -126,14 +128,16 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 					if alertErr := s.ensureAuthAlert(ctx, config, reason); alertErr != nil {
 						s.log(ctx, fmt.Sprintf("Failed to ensure Bandcamp auth alert: %v", sanitizeError(alertErr, initialCookie, config.GetIdentityCookie())))
 					}
-					return nil, sanitizeError(err, initialCookie, config.GetIdentityCookie())
+					return nil, sanitizedErr
 				}
 
 				if err == nil {
 					err = bandcamplib.ErrDownloadUnavailable
 				}
 				failures := config.DownloadLinkFailures[albumID] + 1
+				sanitizedErr := sanitizeError(err, initialCookie, config.GetIdentityCookie())
 				if failures < maxDownloadLinkFailures {
+					s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v (attempt %d/%d): %v", albumID, failures, maxDownloadLinkFailures, sanitizedErr))
 					config.DownloadLinkFailures[albumID] = failures
 					if saveErr := s.saveConfig(ctx, config); saveErr != nil {
 						return nil, sanitizeError(
@@ -142,8 +146,10 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 							config.GetIdentityCookie(),
 						)
 					}
-					return nil, sanitizeError(err, initialCookie, config.GetIdentityCookie())
+					return nil, sanitizedErr
 				}
+
+				s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v (attempt %d/%d, falling back to linkless issue): %v", albumID, failures, maxDownloadLinkFailures, sanitizedErr))
 
 				title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
 				body := fmt.Sprintf(
