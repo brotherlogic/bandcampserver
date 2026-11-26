@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -171,6 +172,63 @@ func normalizeDiscogsCandidates(results []*rcpb.SearchReleaseResult, limit int) 
 		}
 	}
 	return candidates
+}
+
+// lookupDiscogsCandidates performs a bounded, two-stage Discogs search (digital File
+// primary followed by optional non-digital fallback) and records Prometheus outcome metrics.
+func (s *Server) lookupDiscogsCandidates(ctx context.Context, rc rcClient, item *bcpb.Item, cookies ...string) discogsCandidateResult {
+	if item == nil || rc == nil {
+		discogsCandidateLookupTotal.WithLabelValues(string(outcomeSkipped)).Inc()
+		return discogsCandidateResult{Outcome: outcomeSkipped}
+	}
+
+	artist := truncateRunes(item.GetBandName(), maxSearchFieldRunes)
+	albumTitle := truncateRunes(item.GetAlbumTitle(), maxSearchFieldRunes)
+	if artist == "" && albumTitle == "" {
+		discogsCandidateLookupTotal.WithLabelValues(string(outcomeSkipped)).Inc()
+		return discogsCandidateResult{Outcome: outcomeSkipped}
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, discogsLookupTimeout)
+	defer cancel()
+
+	resp, err := rc.SearchReleases(lookupCtx, &rcpb.SearchReleasesRequest{
+		Artist:       artist,
+		ReleaseTitle: albumTitle,
+		Format:       "File",
+		PerPage:      discogsSearchPerPage,
+	})
+	if err != nil {
+		if s != nil {
+			s.log(ctx, fmt.Sprintf("Discogs digital candidate lookup failed for album %v: %v", item.GetAlbumId(), sanitizeError(err, cookies...)))
+		}
+		discogsCandidateLookupTotal.WithLabelValues(string(outcomeError)).Inc()
+		return discogsCandidateResult{Outcome: outcomeError}
+	}
+	if candidates := normalizeDiscogsCandidates(resp.GetResults(), maxDiscogsCandidates); len(candidates) > 0 {
+		discogsCandidateLookupTotal.WithLabelValues(string(outcomeDigital)).Inc()
+		return discogsCandidateResult{Outcome: outcomeDigital, Candidates: candidates}
+	}
+
+	fallbackResp, err := rc.SearchReleases(lookupCtx, &rcpb.SearchReleasesRequest{
+		Artist:       artist,
+		ReleaseTitle: albumTitle,
+		PerPage:      discogsSearchPerPage,
+	})
+	if err != nil {
+		if s != nil {
+			s.log(ctx, fmt.Sprintf("Discogs fallback candidate lookup failed for album %v: %v", item.GetAlbumId(), sanitizeError(err, cookies...)))
+		}
+		discogsCandidateLookupTotal.WithLabelValues(string(outcomeError)).Inc()
+		return discogsCandidateResult{Outcome: outcomeError}
+	}
+	if candidates := normalizeDiscogsCandidates(fallbackResp.GetResults(), maxDiscogsCandidates); len(candidates) > 0 {
+		discogsCandidateLookupTotal.WithLabelValues(string(outcomeFallback)).Inc()
+		return discogsCandidateResult{Outcome: outcomeFallback, Candidates: candidates}
+	}
+
+	discogsCandidateLookupTotal.WithLabelValues(string(outcomeNone)).Inc()
+	return discogsCandidateResult{Outcome: outcomeNone}
 }
 
 func formatCandidateMetadata(c discogsCandidate) string {
