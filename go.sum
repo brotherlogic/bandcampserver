@@ -1,7 +1,7 @@
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
-github.com/brotherlogic/bandcamplib v0.0.0-20261126025528-ac5b07fe86fc h1:JgrMzy3IJeq0nwtl6YzAmdL1nkBZ4Nnem+tAF16b1R4=
-github.com/brotherlogic/bandcamplib v0.0.0-20261126025528-ac5b07fe86fc/go.mod h1:z20k7gsp4tLww8c7pbAjwJ13FrGTfWjn0Yw7xTckoEI=
+github.com/brotherlogic/bandcamplib v0.0.0-20261126181011-e8c0615e22c2 h1:CT5Lt9cc+yWb2T5ZtqZA805wXCBVlD7cjvOQkGBU8Ck=
+github.com/brotherlogic/bandcamplib v0.0.0-20261126181011-e8c0615e22c2/go.mod h1:z20k7gsp4tLww8c7pbAjwJ13FrGTfWjn0Yw7xTckoEI=
 github.com/brotherlogic/buildserver v0.0.0-20260125171235-32c1b69408ba h1:W8J/ApPet9dqHG6MIqxH3tE7BRYV8XgFfuzgL/PThKk=
 github.com/brotherlogic/buildserver v0.0.0-20260125171235-32c1b69408ba/go.mod h1:5l7HQ08oXe7SiNpv8dp0nxaVMC1cJSEkvDZpgZPYNgA=
 github.com/brotherlogic/datastore v0.0.0-20250610012354-722a6beaa331 h1:XTRMSwtcgm8sBrtDZzXCfkUey9r+eOYjFj85HxuEd10=

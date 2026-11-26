@@ -3,7 +3,7 @@ module github.com/brotherlogic/bandcampserver
 go 1.25.0
 
 require (
-	github.com/brotherlogic/bandcamplib v0.0.0-20261126025528-ac5b07fe86fc
+	github.com/brotherlogic/bandcamplib v0.0.0-20261126181011-e8c0615e22c2
 	github.com/brotherlogic/dstore v0.0.0-20250613140516-5b29ccb83705
 	github.com/brotherlogic/githubcard v0.0.0-20251120023818-cdf7f7559d6c
 	github.com/brotherlogic/godiscogs v0.0.0-20250429182651-404c7473edf8
