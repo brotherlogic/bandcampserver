@@ -194,3 +194,7 @@ func (s *Server) Reset(ctx context.Context, req *pb.ResetRequest) (*pb.ResetResp
 
 	return &pb.ResetResponse{}, s.saveConfig(ctx, config)
 }
+
+func (s *Server) SetCookie(ctx context.Context, req *pb.SetCookieRequest) (*pb.SetCookieResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "SetCookie not yet implemented")
+}

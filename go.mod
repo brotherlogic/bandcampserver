@@ -1,16 +1,16 @@
 module github.com/brotherlogic/bandcampserver
 
-go 1.24.5
+go 1.25.0
 
 require (
-	github.com/brotherlogic/bandcamplib v0.0.0-20230119162530-0db89854781a
+	github.com/brotherlogic/bandcamplib v0.0.0-20261126025528-ac5b07fe86fc
 	github.com/brotherlogic/dstore v0.0.0-20250613140516-5b29ccb83705
 	github.com/brotherlogic/godiscogs v0.0.0-20250429182651-404c7473edf8
 	github.com/brotherlogic/goserver v0.0.0-20260125051706-82df7bec125f
 	github.com/brotherlogic/recordcollection v0.0.0-20260131000040-64bb69bb4b10
 	github.com/golang/protobuf v1.5.4
 	github.com/prometheus/client_golang v1.23.2
-	golang.org/x/net v0.49.0
+	golang.org/x/net v0.55.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -36,7 +36,7 @@ require (
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/struCoder/pidusage v0.2.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260202165425-ce8ad4cf556b // indirect
 )
