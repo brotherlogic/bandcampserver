@@ -388,6 +388,23 @@ func TestClientUpdate_PacingPreserved(t *testing.T) {
 	})
 }
 
+func countLogsContaining(entries []string, substrs ...string) int {
+	count := 0
+	for _, entry := range entries {
+		matched := true
+		for _, s := range substrs {
+			if !strings.Contains(entry, s) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			count++
+		}
+	}
+	return count
+}
+
 func TestClientUpdate_AuthErrorsDeduplicationAndRecovery(t *testing.T) {
 	fixedNow := time.Unix(1700020000, 0)
 
@@ -404,13 +421,14 @@ func TestClientUpdate_AuthErrorsDeduplicationAndRecovery(t *testing.T) {
 			Items:          []*bcpb.Item{item},
 		})
 		issues := &apiTestIssueManager{nextIssueID: 700}
+		logger := &apiTestLogger{}
 
 		s := &Server{
 			store:   store,
 			issues:  issues,
 			rc:      newDefaultClientUpdateRC(),
 			now:     func() time.Time { return fixedNow },
-			logFunc: (&apiTestLogger{}).log,
+			logFunc: logger.log,
 		}
 
 		for cycle := 1; cycle <= 2; cycle++ {
@@ -418,6 +436,10 @@ func TestClientUpdate_AuthErrorsDeduplicationAndRecovery(t *testing.T) {
 			if !errors.Is(err, bandcamplib.ErrAuthenticationRequired) {
 				t.Fatalf("cycle %d: err = %v, want ErrAuthenticationRequired", cycle, err)
 			}
+		}
+
+		if got := countLogsContaining(logger.entries(), "501", bandcamplib.ErrAuthenticationRequired.Error()); got < 2 {
+			t.Errorf("expected at least 2 log entries containing album 501 and %q, got %d (%v)", bandcamplib.ErrAuthenticationRequired.Error(), got, logger.entries())
 		}
 
 		calls := issues.immediateSnapshot()
@@ -457,6 +479,7 @@ func TestClientUpdate_AuthErrorsDeduplicationAndRecovery(t *testing.T) {
 			Items:          []*bcpb.Item{itemWithoutLink},
 		})
 		issues := &apiTestIssueManager{nextIssueID: 710}
+		logger := &apiTestLogger{}
 
 		s := &Server{
 			store:  store,
@@ -486,13 +509,22 @@ func TestClientUpdate_AuthErrorsDeduplicationAndRecovery(t *testing.T) {
 				}, nil
 			},
 			now:     func() time.Time { return fixedNow },
-			logFunc: (&apiTestLogger{}).log,
+			logFunc: logger.log,
 		}
 
 		for cycle := 1; cycle <= 2; cycle++ {
 			_, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1})
 			if !errors.Is(err, bandcamplib.ErrAuthenticationFailed) {
 				t.Fatalf("cycle %d: err = %v, want ErrAuthenticationFailed", cycle, err)
+			}
+		}
+
+		if got := countLogsContaining(logger.entries(), "502", bandcamplib.ErrAuthenticationFailed.Error()); got < 2 {
+			t.Errorf("expected at least 2 log entries containing album 502 and %q, got %d (%v)", bandcamplib.ErrAuthenticationFailed.Error(), got, logger.entries())
+		}
+		for _, entry := range logger.entries() {
+			if strings.Contains(entry, expiredCookie) || strings.Contains(entry, freshCookie) {
+				t.Errorf("log entry leaked cookie secret: %q", entry)
 			}
 		}
 
@@ -571,6 +603,7 @@ func TestClientUpdate_ThreeRetryFallbackAndRestartPersistence(t *testing.T) {
 				},
 			})
 			issues := &apiTestIssueManager{nextIssueID: 800}
+			logger := &apiTestLogger{}
 
 			newServer := func() *Server {
 				return &Server{
@@ -586,13 +619,16 @@ func TestClientUpdate_ThreeRetryFallbackAndRestartPersistence(t *testing.T) {
 						}, nil
 					},
 					now:     func() time.Time { return fixedNow },
-					logFunc: (&apiTestLogger{}).log,
+					logFunc: logger.log,
 				}
 			}
 
 			// Cycle 1 (after simulated restart 1)
 			if _, err := newServer().ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); !errors.Is(err, tc.dlErr) {
 				t.Fatalf("cycle 1 err = %v, want %v", err, tc.dlErr)
+			}
+			if got := countLogsContaining(logger.entries(), "601", "1/3", tc.dlErr.Error()); got < 1 {
+				t.Errorf("cycle 1 expected log containing 601, 1/3, and %q; logs=%v", tc.dlErr.Error(), logger.entries())
 			}
 			cfg1 := store.currentConfig(t)
 			if cfg1.GetDownloadLinkFailures()[albumID] != 1 {
@@ -609,6 +645,9 @@ func TestClientUpdate_ThreeRetryFallbackAndRestartPersistence(t *testing.T) {
 			if _, err := newServer().ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); !errors.Is(err, tc.dlErr) {
 				t.Fatalf("cycle 2 err = %v, want %v", err, tc.dlErr)
 			}
+			if got := countLogsContaining(logger.entries(), "601", "2/3", tc.dlErr.Error()); got < 1 {
+				t.Errorf("cycle 2 expected log containing 601, 2/3, and %q; logs=%v", tc.dlErr.Error(), logger.entries())
+			}
 			cfg2 := store.currentConfig(t)
 			if cfg2.GetDownloadLinkFailures()[albumID] != 2 {
 				t.Errorf("cycle 2 failures = %d, want 2", cfg2.GetDownloadLinkFailures()[albumID])
@@ -623,6 +662,9 @@ func TestClientUpdate_ThreeRetryFallbackAndRestartPersistence(t *testing.T) {
 			// Cycle 3 (after simulated restart 3) -> fallback linkless issue
 			if _, err := newServer().ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
 				t.Fatalf("cycle 3 failed: %v", err)
+			}
+			if got := countLogsContaining(logger.entries(), "601", "3/3", tc.dlErr.Error()); got < 1 {
+				t.Errorf("cycle 3 expected log containing 601, 3/3, and %q; logs=%v", tc.dlErr.Error(), logger.entries())
 			}
 			calls := issues.immediateSnapshot()
 			if len(calls) != 1 {
@@ -977,6 +1019,9 @@ func TestClientUpdate_SecretRedaction(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 		assertNoSecretLeak(t, logger, issues, err)
+		if got := countLogsContaining(logger.entries(), "901", bandcamplib.ErrAuthenticationFailed.Error(), "[REDACTED]"); got < 1 {
+			t.Errorf("expected log entry containing 901, %q, and [REDACTED]; logs=%v", bandcamplib.ErrAuthenticationFailed.Error(), logger.entries())
+		}
 	})
 
 	t.Run("non-auth failure and 3-retry fallback redact secrets", func(t *testing.T) {
@@ -1013,6 +1058,56 @@ func TestClientUpdate_SecretRedaction(t *testing.T) {
 			t.Fatalf("unexpected error on 3rd failure fallback: %v", err)
 		}
 		assertNoSecretLeak(t, logger, issues, err)
+		if got := countLogsContaining(logger.entries(), "902", "3/3", "upstream failure with", "[REDACTED]"); got < 1 {
+			t.Errorf("expected log entry containing 902, 3/3, upstream failure with, and [REDACTED]; logs=%v", logger.entries())
+		}
+	})
+
+	t.Run("non-auth retry attempts 1-2 redact secrets", func(t *testing.T) {
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: initialCookie,
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			Items: []*bcpb.Item{
+				{AlbumId: 905, BandName: "Secret Artist 5", AlbumTitle: "Secret Album 5", RedownloadUrl: "https://bandcamp.com/dl/905"},
+			},
+		})
+		issues := &apiTestIssueManager{}
+		logger := &apiTestLogger{}
+		s := &Server{
+			store:  store,
+			issues: issues,
+			rc:     newDefaultClientUpdateRC(),
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				return &clientUpdateFakeBandcampClient{
+					identityCookie: cfg.GetIdentityCookie(),
+					onRefresh:      onRefresh,
+					downloadFn: func(ctx context.Context, redownloadURL string, format bandcamplib.Format, cb func(string)) (string, error) {
+						cb(rotatedCookie)
+						return "", fmt.Errorf("retry upstream failure with %s and %s", cfg.GetIdentityCookie(), rotatedCookie)
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: logger.log,
+		}
+
+		_, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1})
+		if err == nil {
+			t.Fatal("attempt 1: expected error, got nil")
+		}
+		assertNoSecretLeak(t, logger, issues, err)
+		if got := countLogsContaining(logger.entries(), "905", "1/3", "retry upstream failure with", "[REDACTED]"); got < 1 {
+			t.Errorf("attempt 1: expected log entry containing 905, 1/3, retry upstream failure with, and [REDACTED]; logs=%v", logger.entries())
+		}
+
+		_, err = s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1})
+		if err == nil {
+			t.Fatal("attempt 2: expected error, got nil")
+		}
+		assertNoSecretLeak(t, logger, issues, err)
+		if got := countLogsContaining(logger.entries(), "905", "2/3", "retry upstream failure with", "[REDACTED]"); got < 1 {
+			t.Errorf("attempt 2: expected log entry containing 905, 2/3, retry upstream failure with, and [REDACTED]; logs=%v", logger.entries())
+		}
 	})
 
 	t.Run("ImmediateIssue failure redacts secrets", func(t *testing.T) {
