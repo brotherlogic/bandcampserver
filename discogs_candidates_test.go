@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestDiscogsCandidateConstants(t *testing.T) {
@@ -430,5 +433,470 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 		if strings.Contains(body, "bandcampserver_cli mapping") {
 			t.Fatalf("linkless fallback with outcomeFallback must not emit mapping command:\n%s", body)
 		}
+	})
+}
+
+type lookupTestRecorder struct {
+	mu   sync.Mutex
+	logs []string
+}
+
+func (r *lookupTestRecorder) log(_ context.Context, msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.logs = append(r.logs, msg)
+}
+
+func (r *lookupTestRecorder) messages() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.logs))
+	copy(out, r.logs)
+	return out
+}
+
+func newLookupTestServer() (*Server, *lookupTestRecorder) {
+	rec := &lookupTestRecorder{}
+	return &Server{logFunc: rec.log}, rec
+}
+
+func snapshotDiscogsLookupCounters() map[discogsLookupOutcome]float64 {
+	outcomes := []discogsLookupOutcome{
+		outcomeDigital,
+		outcomeFallback,
+		outcomeNone,
+		outcomeSkipped,
+		outcomeError,
+	}
+	snap := make(map[discogsLookupOutcome]float64, len(outcomes))
+	for _, o := range outcomes {
+		snap[o] = testutil.ToFloat64(discogsCandidateLookupTotal.WithLabelValues(string(o)))
+	}
+	return snap
+}
+
+func assertDiscogsLookupCounterDelta(t *testing.T, before map[discogsLookupOutcome]float64, wantOutcome discogsLookupOutcome) {
+	t.Helper()
+	after := snapshotDiscogsLookupCounters()
+	for outcome, prev := range before {
+		wantDelta := 0.0
+		if outcome == wantOutcome {
+			wantDelta = 1.0
+		}
+		if gotDelta := after[outcome] - prev; gotDelta != wantDelta {
+			t.Fatalf("discogsCandidateLookupTotal[%q] delta = %v, want %v", outcome, gotDelta, wantDelta)
+		}
+	}
+}
+
+func TestLookupDiscogsCandidates_PrimaryDigitalHit(t *testing.T) {
+	before := snapshotDiscogsLookupCounters()
+	s, rec := newLookupTestServer()
+	rc := &clientUpdateFakeRCClient{
+		searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+			return &rcpb.SearchReleasesResponse{
+				Results: []*rcpb.SearchReleaseResult{
+					{ReleaseId: 101, Title: "Digital 1", Year: "2024", Formats: []string{"File", "WAV"}},
+					{ReleaseId: 101, Title: "Duplicate 101"},
+					{ReleaseId: 202, Title: "Digital 2", Year: "2024", Formats: []string{"File"}},
+					{ReleaseId: 303, Title: "Digital 3", Year: "2024", Formats: []string{"File"}},
+					{ReleaseId: 404, Title: "Digital 4 Should Be Capped"},
+				},
+			}, nil
+		},
+	}
+	item := &bcpb.Item{AlbumId: 9001, BandName: "Test Band", AlbumTitle: "Test Album"}
+
+	res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+	if res.Outcome != outcomeDigital {
+		t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeDigital)
+	}
+	if len(res.Candidates) != 3 {
+		t.Fatalf("len(Candidates) = %d, want 3", len(res.Candidates))
+	}
+	if len(rc.searchCalls) != 1 {
+		t.Fatalf("expected exactly 1 SearchReleases call (no fallback), got %d", len(rc.searchCalls))
+	}
+	gotReq := rc.searchCalls[0]
+	if gotReq.GetArtist() != "Test Band" || gotReq.GetReleaseTitle() != "Test Album" || gotReq.GetFormat() != "File" || gotReq.GetPerPage() != 10 {
+		t.Fatalf("unexpected primary SearchReleasesRequest: %+v", gotReq)
+	}
+	if len(rec.messages()) != 0 {
+		t.Fatalf("expected no error logs, got %v", rec.messages())
+	}
+	assertDiscogsLookupCounterDelta(t, before, outcomeDigital)
+}
+
+func TestLookupDiscogsCandidates_NonDigitalFallbackHit(t *testing.T) {
+	cases := []struct {
+		name           string
+		primaryResults []*rcpb.SearchReleaseResult
+	}{
+		{
+			name:           "primary returns empty results",
+			primaryResults: nil,
+		},
+		{
+			name: "primary returns only invalid release IDs",
+			primaryResults: []*rcpb.SearchReleaseResult{
+				nil,
+				{ReleaseId: 0, Title: "Zero"},
+				{ReleaseId: -5, Title: "Negative"},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := snapshotDiscogsLookupCounters()
+			s, rec := newLookupTestServer()
+			callIdx := 0
+			rc := &clientUpdateFakeRCClient{
+				searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+					callIdx++
+					if callIdx == 1 {
+						return &rcpb.SearchReleasesResponse{Results: tc.primaryResults}, nil
+					}
+					return &rcpb.SearchReleasesResponse{
+						Results: []*rcpb.SearchReleaseResult{
+							{ReleaseId: 501, Title: "Vinyl 1", Year: "2020", Formats: []string{"Vinyl"}},
+							{ReleaseId: 502, Title: "CD 2", Year: "2021", Formats: []string{"CD"}},
+							{ReleaseId: 503, Title: "Cassette 3", Year: "2022", Formats: []string{"Cassette"}},
+							{ReleaseId: 504, Title: "Extra 4"},
+						},
+					}, nil
+				},
+			}
+			item := &bcpb.Item{AlbumId: 9002, BandName: "Fallback Band", AlbumTitle: "Fallback Album"}
+
+			res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+			if res.Outcome != outcomeFallback {
+				t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeFallback)
+			}
+			if len(res.Candidates) != 3 {
+				t.Fatalf("len(Candidates) = %d, want 3", len(res.Candidates))
+			}
+			if len(rc.searchCalls) != 2 {
+				t.Fatalf("expected 2 SearchReleases calls, got %d", len(rc.searchCalls))
+			}
+			if rc.searchCalls[0].GetFormat() != "File" || rc.searchCalls[0].GetPerPage() != 10 {
+				t.Fatalf("unexpected primary request: %+v", rc.searchCalls[0])
+			}
+			if rc.searchCalls[1].GetFormat() != "" || rc.searchCalls[1].GetPerPage() != 10 {
+				t.Fatalf("unexpected fallback request: %+v", rc.searchCalls[1])
+			}
+			if len(rec.messages()) != 0 {
+				t.Fatalf("expected no error logs, got %v", rec.messages())
+			}
+			assertDiscogsLookupCounterDelta(t, before, outcomeFallback)
+		})
+	}
+}
+
+func TestLookupDiscogsCandidates_NoCandidatesFound(t *testing.T) {
+	before := snapshotDiscogsLookupCounters()
+	s, rec := newLookupTestServer()
+	rc := &clientUpdateFakeRCClient{
+		searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+			return &rcpb.SearchReleasesResponse{}, nil
+		},
+	}
+	item := &bcpb.Item{AlbumId: 9003, BandName: "Unknown Artist", AlbumTitle: "Unknown Release"}
+
+	res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+	if res.Outcome != outcomeNone {
+		t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeNone)
+	}
+	if len(res.Candidates) != 0 {
+		t.Fatalf("expected 0 candidates, got %+v", res.Candidates)
+	}
+	if len(rc.searchCalls) != 2 {
+		t.Fatalf("expected 2 SearchReleases calls, got %d", len(rc.searchCalls))
+	}
+	if len(rec.messages()) != 0 {
+		t.Fatalf("expected no error logs, got %v", rec.messages())
+	}
+	assertDiscogsLookupCounterDelta(t, before, outcomeNone)
+}
+
+func TestLookupDiscogsCandidates_ErrorsAndCookieSanitization(t *testing.T) {
+	const (
+		cookie1 = "secret-cookie-primary"
+		cookie2 = "secret-cookie-fallback"
+	)
+
+	t.Run("primary error stops immediately without running fallback and sanitizes log", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, rec := newLookupTestServer()
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				return nil, fmt.Errorf("upstream failure with %s and %s", cookie1, cookie2)
+			},
+		}
+		item := &bcpb.Item{AlbumId: 9004, BandName: "Band", AlbumTitle: "Album"}
+
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item, cookie1, cookie2)
+		if res.Outcome != outcomeError {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeError)
+		}
+		if len(res.Candidates) != 0 {
+			t.Fatalf("expected 0 candidates, got %+v", res.Candidates)
+		}
+		if len(rc.searchCalls) != 1 {
+			t.Fatalf("expected exactly 1 SearchReleases call (fallback must not run), got %d", len(rc.searchCalls))
+		}
+		logs := rec.messages()
+		if len(logs) != 1 {
+			t.Fatalf("expected 1 sanitized error log, got %d: %v", len(logs), logs)
+		}
+		if strings.Contains(logs[0], cookie1) || strings.Contains(logs[0], cookie2) {
+			t.Fatalf("raw cookie leaked in log: %q", logs[0])
+		}
+		if !strings.Contains(logs[0], "[REDACTED]") {
+			t.Fatalf("expected [REDACTED] in sanitized log: %q", logs[0])
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeError)
+	})
+
+	t.Run("primary empty plus fallback error returns outcomeError and sanitizes log", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, rec := newLookupTestServer()
+		callIdx := 0
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				callIdx++
+				if callIdx == 1 {
+					return &rcpb.SearchReleasesResponse{}, nil
+				}
+				return nil, fmt.Errorf("fallback failure %s", cookie2)
+			},
+		}
+		item := &bcpb.Item{AlbumId: 9005, BandName: "Band", AlbumTitle: "Album"}
+
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item, cookie1, cookie2)
+		if res.Outcome != outcomeError {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeError)
+		}
+		if len(rc.searchCalls) != 2 {
+			t.Fatalf("expected 2 SearchReleases calls, got %d", len(rc.searchCalls))
+		}
+		logs := rec.messages()
+		if len(logs) != 1 {
+			t.Fatalf("expected 1 sanitized error log, got %d: %v", len(logs), logs)
+		}
+		if strings.Contains(logs[0], cookie2) || !strings.Contains(logs[0], "[REDACTED]") {
+			t.Fatalf("expected sanitized cookie in log, got %q", logs[0])
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeError)
+	})
+}
+
+func TestLookupDiscogsCandidates_SharedTimeoutBudget(t *testing.T) {
+	origTimeout := discogsLookupTimeout
+	discogsLookupTimeout = 50 * time.Millisecond
+	t.Cleanup(func() {
+		discogsLookupTimeout = origTimeout
+	})
+
+	t.Run("hanging primary respects timeout and does not run fallback", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, rec := newLookupTestServer()
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		}
+		item := &bcpb.Item{AlbumId: 9006, BandName: "Slow", AlbumTitle: "Primary"}
+
+		start := time.Now()
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+		elapsed := time.Since(start)
+
+		if res.Outcome != outcomeError {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeError)
+		}
+		if elapsed >= 500*time.Millisecond {
+			t.Fatalf("lookup took too long (%v), expected bounded ~50ms timeout", elapsed)
+		}
+		if len(rc.searchCalls) != 1 {
+			t.Fatalf("expected 1 SearchReleases call, got %d", len(rc.searchCalls))
+		}
+		if len(rec.messages()) != 1 {
+			t.Fatalf("expected 1 error log, got %v", rec.messages())
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeError)
+	})
+
+	t.Run("slow primary plus hanging fallback share single deadline", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, rec := newLookupTestServer()
+		var deadlines []time.Time
+		callIdx := 0
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				callIdx++
+				dl, ok := ctx.Deadline()
+				if !ok {
+					t.Fatal("expected lookupCtx to have a deadline")
+				}
+				deadlines = append(deadlines, dl)
+				if callIdx == 1 {
+					select {
+					case <-time.After(25 * time.Millisecond):
+						return &rcpb.SearchReleasesResponse{}, nil
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		}
+		item := &bcpb.Item{AlbumId: 9007, BandName: "Slow", AlbumTitle: "Fallback"}
+
+		start := time.Now()
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+		elapsed := time.Since(start)
+
+		if res.Outcome != outcomeError {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeError)
+		}
+		if elapsed >= 500*time.Millisecond {
+			t.Fatalf("lookup took too long (%v), expected shared ~50ms deadline", elapsed)
+		}
+		if len(rc.searchCalls) != 2 {
+			t.Fatalf("expected 2 SearchReleases calls, got %d", len(rc.searchCalls))
+		}
+		if len(deadlines) != 2 || !deadlines[0].Equal(deadlines[1]) {
+			t.Fatalf("expected identical shared deadline across primary and fallback, got %v", deadlines)
+		}
+		if len(rec.messages()) != 1 {
+			t.Fatalf("expected 1 error log, got %v", rec.messages())
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeError)
+	})
+}
+
+func TestLookupDiscogsCandidates_MetadataEdgeCases(t *testing.T) {
+	t.Run("nil item, nil rc, or empty metadata skips with 0 RPC calls", func(t *testing.T) {
+		s, _ := newLookupTestServer()
+		cases := []struct {
+			name string
+			rc   rcClient
+			item *bcpb.Item
+		}{
+			{
+				name: "nil item",
+				rc:   &clientUpdateFakeRCClient{},
+				item: nil,
+			},
+			{
+				name: "nil rc",
+				rc:   nil,
+				item: &bcpb.Item{AlbumId: 1, BandName: "Artist", AlbumTitle: "Album"},
+			},
+			{
+				name: "empty and whitespace metadata",
+				rc:   &clientUpdateFakeRCClient{},
+				item: &bcpb.Item{AlbumId: 2, BandName: " \t\n ", AlbumTitle: "   "},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				before := snapshotDiscogsLookupCounters()
+				res := s.lookupDiscogsCandidates(context.Background(), tc.rc, tc.item)
+				if res.Outcome != outcomeSkipped {
+					t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeSkipped)
+				}
+				if fake, ok := tc.rc.(*clientUpdateFakeRCClient); ok && len(fake.searchCalls) != 0 {
+					t.Fatalf("expected 0 RPC calls, got %d", len(fake.searchCalls))
+				}
+				assertDiscogsLookupCounterDelta(t, before, outcomeSkipped)
+			})
+		}
+	})
+
+	t.Run("only BandName populated invokes SearchReleases cleanly", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, _ := newLookupTestServer()
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				return &rcpb.SearchReleasesResponse{
+					Results: []*rcpb.SearchReleaseResult{{ReleaseId: 801, Title: "Only Artist Match"}},
+				}, nil
+			},
+		}
+		item := &bcpb.Item{AlbumId: 9008, BandName: "  Solo Artist  ", AlbumTitle: "   "}
+
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+		if res.Outcome != outcomeDigital {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeDigital)
+		}
+		if len(rc.searchCalls) != 1 {
+			t.Fatalf("expected 1 RPC call, got %d", len(rc.searchCalls))
+		}
+		if rc.searchCalls[0].GetArtist() != "Solo Artist" || rc.searchCalls[0].GetReleaseTitle() != "" {
+			t.Fatalf("unexpected request fields: %+v", rc.searchCalls[0])
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeDigital)
+	})
+
+	t.Run("only AlbumTitle populated invokes SearchReleases cleanly", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, _ := newLookupTestServer()
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				return &rcpb.SearchReleasesResponse{
+					Results: []*rcpb.SearchReleaseResult{{ReleaseId: 802, Title: "Only Album Match"}},
+				}, nil
+			},
+		}
+		item := &bcpb.Item{AlbumId: 9009, BandName: "", AlbumTitle: "  Solo Album  "}
+
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+		if res.Outcome != outcomeDigital {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeDigital)
+		}
+		if len(rc.searchCalls) != 1 {
+			t.Fatalf("expected 1 RPC call, got %d", len(rc.searchCalls))
+		}
+		if rc.searchCalls[0].GetArtist() != "" || rc.searchCalls[0].GetReleaseTitle() != "Solo Album" {
+			t.Fatalf("unexpected request fields: %+v", rc.searchCalls[0])
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeDigital)
+	})
+
+	t.Run("metadata longer than 500 runes is truncated on UTF-8 rune boundaries", func(t *testing.T) {
+		before := snapshotDiscogsLookupCounters()
+		s, _ := newLookupTestServer()
+		rc := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				return &rcpb.SearchReleasesResponse{}, nil
+			},
+		}
+		item := &bcpb.Item{
+			AlbumId:    9010,
+			BandName:   strings.Repeat("é", 600),
+			AlbumTitle: strings.Repeat("🎵", 600),
+		}
+
+		res := s.lookupDiscogsCandidates(context.Background(), rc, item)
+		if res.Outcome != outcomeNone {
+			t.Fatalf("Outcome = %q, want %q", res.Outcome, outcomeNone)
+		}
+		if len(rc.searchCalls) != 2 {
+			t.Fatalf("expected 2 RPC calls, got %d", len(rc.searchCalls))
+		}
+		for i, req := range rc.searchCalls {
+			if rcArtist := utf8.RuneCountInString(req.GetArtist()); rcArtist != maxSearchFieldRunes || !utf8.ValidString(req.GetArtist()) {
+				t.Fatalf("call %d Artist runeCount=%d valid=%v", i, rcArtist, utf8.ValidString(req.GetArtist()))
+			}
+			if rcTitle := utf8.RuneCountInString(req.GetReleaseTitle()); rcTitle != maxSearchFieldRunes || !utf8.ValidString(req.GetReleaseTitle()) {
+				t.Fatalf("call %d ReleaseTitle runeCount=%d valid=%v", i, rcTitle, utf8.ValidString(req.GetReleaseTitle()))
+			}
+		}
+		assertDiscogsLookupCounterDelta(t, before, outcomeNone)
 	})
 }
