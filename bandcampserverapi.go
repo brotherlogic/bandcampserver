@@ -33,8 +33,13 @@ func (s *Server) Lookup(ctx context.Context, req *pb.LookupRequest) (*pb.LookupR
 	return nil, status.Errorf(codes.NotFound, "Could not find %v", req)
 }
 
+const maxDownloadLinkFailures int32 = 3
+
 // ClientUpdate on an updated record
 func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest) (*rcpb.ClientUpdateResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	config, err := s.loadConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -60,7 +65,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	}
 
 	// Check that this record is correct from bandcamp point of view
-	if record.Record.GetRelease().GetFolderId() == 1782105 {
+	if record.GetRecord().GetRelease().GetFolderId() == 1782105 {
 		found := false
 		for _, format := range record.GetRecord().GetRelease().GetFormats() {
 			if format.GetName() == "File" {
@@ -82,15 +87,79 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				s.log(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0))))
 				continue
 			}
-			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
+			albumID := item.GetAlbumId()
+			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v - %v (%v)", albumID, item.GetBandName(), item.GetAlbumTitle(), today))
 
-			if config.IssueIds[item.GetAlbumId()] == 0 {
-				issue, err := issues.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false, false)
-				if err != nil {
-					return nil, err
+			if config.IssueIds[albumID] == 0 {
+				initialCookie := config.GetIdentityCookie()
+				wavURL, err := s.resolveWAVLinkForItem(ctx, config, item)
+				if err == nil && wavURL != "" {
+					if clearErr := s.clearAuthAlert(ctx, config); clearErr != nil {
+						s.log(ctx, fmt.Sprintf("Failed to clear Bandcamp auth alert: %v", sanitizeError(clearErr, initialCookie, config.GetIdentityCookie())))
+					}
+					title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
+					body := redactCookie(
+						fmt.Sprintf(
+							"%v - %v (%v) is missing a mapping\n\nDirect WAV download link: %s\n\nNote: Bandcamp direct download links are time-limited and may expire over time.",
+							item.GetBandName(),
+							item.GetAlbumTitle(),
+							albumID,
+							wavURL,
+						),
+						initialCookie,
+						config.GetIdentityCookie(),
+					)
+					issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
+					if issueErr != nil {
+						return nil, sanitizeError(issueErr, initialCookie, config.GetIdentityCookie())
+					}
+					config.IssueIds[albumID] = issue.GetNumber()
+					delete(config.DownloadLinkFailures, albumID)
+					return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), initialCookie, config.GetIdentityCookie())
 				}
-				config.IssueIds[item.GetAlbumId()] = issue.GetNumber()
-				return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
+
+				if errors.Is(err, bandcamplib.ErrAuthenticationRequired) || errors.Is(err, bandcamplib.ErrAuthenticationFailed) {
+					reason := "Bandcamp session cookie expired or was rejected while resolving WAV download link."
+					if errors.Is(err, bandcamplib.ErrAuthenticationRequired) {
+						reason = "Bandcamp session cookie is missing while resolving WAV download link."
+					}
+					if alertErr := s.ensureAuthAlert(ctx, config, reason); alertErr != nil {
+						s.log(ctx, fmt.Sprintf("Failed to ensure Bandcamp auth alert: %v", sanitizeError(alertErr, initialCookie, config.GetIdentityCookie())))
+					}
+					return nil, sanitizeError(err, initialCookie, config.GetIdentityCookie())
+				}
+
+				if err == nil {
+					err = bandcamplib.ErrDownloadUnavailable
+				}
+				failures := config.DownloadLinkFailures[albumID] + 1
+				if failures < maxDownloadLinkFailures {
+					config.DownloadLinkFailures[albumID] = failures
+					if saveErr := s.saveConfig(ctx, config); saveErr != nil {
+						return nil, sanitizeError(
+							fmt.Errorf("persist download link failure count: %w (after link resolution error: %w)", saveErr, err),
+							initialCookie,
+							config.GetIdentityCookie(),
+						)
+					}
+					return nil, sanitizeError(err, initialCookie, config.GetIdentityCookie())
+				}
+
+				title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
+				body := fmt.Sprintf(
+					"%v - %v (%v) is missing a mapping\n\nNote: WAV download link generation failed after %d attempts.",
+					item.GetBandName(),
+					item.GetAlbumTitle(),
+					albumID,
+					maxDownloadLinkFailures,
+				)
+				issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
+				if issueErr != nil {
+					return nil, sanitizeError(issueErr, initialCookie, config.GetIdentityCookie())
+				}
+				config.IssueIds[albumID] = issue.GetNumber()
+				delete(config.DownloadLinkFailures, albumID)
+				return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), initialCookie, config.GetIdentityCookie())
 			}
 			return &rcpb.ClientUpdateResponse{}, nil
 		} else if val > 0 && config.AddedDate[val] == 0 {
