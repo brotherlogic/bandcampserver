@@ -25,6 +25,8 @@ type clientUpdateFakeRCClient struct {
 	queryResp    *rcpb.QueryRecordsResponse
 	queryErr     error
 	addCalls     int
+	searchFn     func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error)
+	searchCalls  []*rcpb.SearchReleasesRequest
 }
 
 func (f *clientUpdateFakeRCClient) GetRecord(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
@@ -70,6 +72,17 @@ func (f *clientUpdateFakeRCClient) AddRecord(ctx context.Context, req *rcpb.AddR
 	return &rcpb.AddRecordResponse{}, nil
 }
 
+func (f *clientUpdateFakeRCClient) SearchReleases(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+	f.mu.Lock()
+	f.searchCalls = append(f.searchCalls, req)
+	searchFn := f.searchFn
+	f.mu.Unlock()
+	if searchFn != nil {
+		return searchFn(ctx, req)
+	}
+	return &rcpb.SearchReleasesResponse{}, nil
+}
+
 type clientUpdateFakeBandcampClient struct {
 	identityCookie string
 	onRefresh      func(string)
@@ -99,7 +112,7 @@ func newDefaultClientUpdateRC() *clientUpdateFakeRCClient {
 	return &clientUpdateFakeRCClient{
 		folderID:   1782105,
 		hasFileFmt: true,
-		queryResp:  &rcpb.QueryRecordsResponse{InstanceIds: []int32{1}},
+		queryResp:  &rcpb.QueryRecordsResponse{InstanceIds: []int64{1}},
 	}
 }
 

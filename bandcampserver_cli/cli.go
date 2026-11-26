@@ -142,13 +142,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, dial dial
 			fmt.Fprintln(stderr, "Usage: bandcampserver_cli ping <instance_id>")
 			return 1
 		}
-		id, err := strconv.ParseInt(args[1], 10, 32)
+		id, err := strconv.ParseInt(args[1], 10, 64)
 		if err != nil {
 			fmt.Fprintf(stderr, "Invalid instance id: %v\n", err)
 			return 1
 		}
 		return withClient(ctx, stderr, dial, nil, func(_ pb.BandcampServerServiceClient, sclient pbrc.ClientUpdateServiceClient) int {
-			if _, err := sclient.ClientUpdate(ctx, &pbrc.ClientUpdateRequest{InstanceId: int32(id)}); err != nil {
+			if _, err := sclient.ClientUpdate(ctx, &pbrc.ClientUpdateRequest{InstanceId: id}); err != nil {
 				fmt.Fprintf(stderr, "Error on GET: %v\n", err)
 				return 1
 			}
