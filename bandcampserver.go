@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/brotherlogic/bandcamplib"
 	"github.com/brotherlogic/goserver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -16,8 +19,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	pb "github.com/brotherlogic/bandcampserver/proto"
 	dspb "github.com/brotherlogic/dstore/proto"
+	pbgh "github.com/brotherlogic/githubcard/proto"
 	pbg "github.com/brotherlogic/goserver/proto"
 	"github.com/brotherlogic/goserver/utils"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
@@ -53,12 +58,94 @@ var (
 		Name: "bandcampserver_dates",
 		Help: "The size of the tracking queue",
 	})
+	cookieAge = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_cookie_age",
+		Help: "Unix timestamp of the last Bandcamp identity cookie refresh",
+	})
+	authValid = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "bandcampserver_auth_valid",
+		Help: "Whether Bandcamp cookie authentication is currently valid",
+	})
 )
+
+type configStore interface {
+	Load(ctx context.Context, key string) ([]byte, error)
+	Save(ctx context.Context, data []byte, key string) error
+}
+
+type bandcampClient interface {
+	RetrieveItems(ctx context.Context) ([]*bcpb.Item, error)
+	GetDownloadURLForRedownloadURL(ctx context.Context, redownloadURL string, format bandcamplib.Format) (string, error)
+	IdentityCookie() string
+}
+
+type bandcampClientFactory func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error)
+
+type issueManager interface {
+	ImmediateIssue(ctx context.Context, title, body string, printImmediately, print bool, labels ...string) (*pbgh.Issue, error)
+	DeleteIssue(ctx context.Context, number int32) error
+	RaiseIssue(title, body string, labels ...string)
+}
+
+type rcClient interface {
+	GetRecord(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error)
+	QueryRecords(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error)
+	AddRecord(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error)
+}
+
+type dstoreConfigStore struct {
+	server *Server
+}
+
+func (d *dstoreConfigStore) Load(ctx context.Context, key string) ([]byte, error) {
+	return d.server.load(ctx, key)
+}
+
+func (d *dstoreConfigStore) Save(ctx context.Context, data []byte, key string) error {
+	return d.server.save(ctx, data, key)
+}
+
+func defaultBandcampClientFactory(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+	if onRefresh != nil {
+		return bandcamplib.NewClient(cfg, bandcamplib.WithCookieRefreshCallback(onRefresh))
+	}
+	return bandcamplib.NewClient(cfg)
+}
+
+type prodRCClient struct {
+	server *Server
+}
+
+func (p *prodRCClient) GetRecord(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+	return p.server.rcclient.GetRecord(ctx, req)
+}
+
+func (p *prodRCClient) QueryRecords(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error) {
+	return p.server.rcclient.QueryRecords(ctx, req)
+}
+
+func (p *prodRCClient) AddRecord(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error) {
+	conn, err := p.server.FDialServer(ctx, "recordcollection")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := rcpb.NewRecordCollectionServiceClient(conn)
+	return client.AddRecord(ctx, req)
+}
 
 // Server main server type
 type Server struct {
 	*goserver.GoServer
-	rcclient *recordcollection_client.RecordCollectionClient
+	mu        sync.Mutex
+	rcclient  *recordcollection_client.RecordCollectionClient
+	store     configStore
+	bcFactory bandcampClientFactory
+	issues    issueManager
+	rc        rcClient
+	now       func() time.Time
+	logFunc   func(ctx context.Context, message string)
 }
 
 // Init builds the server
@@ -67,7 +154,53 @@ func Init() *Server {
 		GoServer: &goserver.GoServer{},
 	}
 	s.rcclient = &recordcollection_client.RecordCollectionClient{Gs: s.GoServer}
+	s.store = &dstoreConfigStore{server: s}
+	s.bcFactory = defaultBandcampClientFactory
+	s.issues = s.GoServer
+	s.rc = &prodRCClient{server: s}
+	s.now = time.Now
+	s.logFunc = s.GoServer.CtxLog
 	return s
+}
+
+func (s *Server) nowTime() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+func (s *Server) log(ctx context.Context, message string) {
+	if s.logFunc != nil {
+		s.logFunc(ctx, message)
+		return
+	}
+	if s.GoServer != nil {
+		s.CtxLog(ctx, message)
+	}
+}
+
+func (s *Server) getIssueManager() issueManager {
+	if s.issues != nil {
+		return s.issues
+	}
+	return s.GoServer
+}
+
+func (s *Server) getRCClient() rcClient {
+	if s.rc != nil {
+		return s.rc
+	}
+	return &prodRCClient{server: s}
+}
+
+func updateAuthMetrics(config *pb.Config) {
+	cookieAge.Set(float64(config.GetLastCookieRefresh()))
+	if strings.TrimSpace(config.GetIdentityCookie()) != "" && config.GetAuthAlertIssueId() == 0 {
+		authValid.Set(1)
+	} else {
+		authValid.Set(0)
+	}
 }
 
 // DoRegister does RPC registration
@@ -119,18 +252,23 @@ func (s *Server) load(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
-	data, err := s.load(ctx, CONFIG_KEY)
-	if err != nil {
-		if status.Convert(err).Code() == codes.InvalidArgument {
-			return &pb.Config{}, nil
-		}
-		return nil, err
+	var data []byte
+	var err error
+	if s.store != nil {
+		data, err = s.store.Load(ctx, CONFIG_KEY)
+	} else {
+		data, err = s.load(ctx, CONFIG_KEY)
 	}
 
 	config := &pb.Config{}
-	err = proto.Unmarshal(data, config)
 	if err != nil {
-		return nil, err
+		if status.Convert(err).Code() != codes.InvalidArgument {
+			return nil, err
+		}
+	} else {
+		if err = proto.Unmarshal(data, config); err != nil {
+			return nil, err
+		}
 	}
 
 	dc := 0
@@ -143,7 +281,7 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	done.Set(float64(dc))
 	count.Set(float64(len(config.GetItems())))
 	tokenAge.Set(float64(config.GetLastTokenRefresh()))
-	monthPerc.Set(float64(time.Now().Day()) / 30.0)
+	monthPerc.Set(float64(s.nowTime().Day()) / 30.0)
 
 	if config.Mapping == nil {
 		config.Mapping = make(map[int64]int32)
@@ -157,10 +295,14 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	if config.LastValidateDate == nil {
 		config.LastValidateDate = make(map[int64]int64)
 	}
+	if config.DownloadLinkFailures == nil {
+		config.DownloadLinkFailures = make(map[int64]int32)
+	}
 
+	updateAuthMetrics(config)
 	s.metrics(ctx, config)
 
-	s.CtxLog(ctx, fmt.Sprintf("Got token: %v", config.GetToken()))
+	s.log(ctx, fmt.Sprintf("Got token: %v", config.GetToken()))
 
 	return config, nil
 }
@@ -169,6 +311,9 @@ func (s *Server) saveConfig(ctx context.Context, config *pb.Config) error {
 	data, err := proto.Marshal(config)
 	if err != nil {
 		return err
+	}
+	if s.store != nil {
+		return s.store.Save(ctx, data, CONFIG_KEY)
 	}
 	return s.save(ctx, data, CONFIG_KEY)
 }
@@ -208,6 +353,15 @@ func (s *Server) loadRecord(ctx context.Context, id int32) (*rcpb.Record, error)
 	return resp.GetRecord(), nil
 }
 
+func (s *Server) refreshStartupToken(ctx context.Context, config *pb.Config, setToken func(context.Context, *pb.SetTokenRequest) (*pb.SetTokenResponse, error)) {
+	if _, err := setToken(ctx, &pb.SetTokenRequest{Token: fmt.Sprintf("%v::a::", s.nowTime().Unix())}); err != nil {
+		s.log(ctx, fmt.Sprintf("Startup temporary token refresh failed: %v", err))
+	}
+	if _, err := setToken(ctx, &pb.SetTokenRequest{Token: config.GetToken()}); err != nil {
+		s.log(ctx, fmt.Sprintf("Startup token restore failed: %v", err))
+	}
+}
+
 func main() {
 	var quiet = flag.Bool("quiet", false, "Show all output")
 	flag.Parse()
@@ -233,17 +387,11 @@ func main() {
 		cancel()
 		log.Fatalf("Unable to load initial cache: %v", err)
 	}
-	server.CtxLog(ctx, fmt.Sprintf("Loaded with %v items", len(config.GetItems())))
+	server.log(ctx, fmt.Sprintf("Loaded with %v items", len(config.GetItems())))
 	server.metrics(ctx, config)
 
-	_, err = server.SetToken(ctx, &pb.SetTokenRequest{Token: fmt.Sprintf("%v::a::", time.Now().Unix())})
-	if err != nil {
-		log.Fatalf("Bad token set: %v", err)
-	}
-
+	server.refreshStartupToken(ctx, config, server.SetToken)
 	cancel()
-
-	server.SetToken(ctx, &pb.SetTokenRequest{Token: config.GetToken()})
 
 	fmt.Printf("%v", server.Serve())
 }
