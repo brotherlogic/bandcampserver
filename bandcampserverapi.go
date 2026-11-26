@@ -40,7 +40,10 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 	today := s.metrics(ctx, config)
 
-	record, err := s.rcclient.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: req.GetInstanceId()})
+	rc := s.getRCClient()
+	issues := s.getIssueManager()
+
+	record, err := rc.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: req.GetInstanceId()})
 	if err != nil {
 		if status.Code(err) != codes.OutOfRange {
 			return nil, err
@@ -65,22 +68,22 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 		if !found {
 			// This can be deleted?
-			s.RaiseIssue("Can we delete", fmt.Sprintf("https://www.discogs.com/madeup/release/%v", record.GetRecord().GetRelease().GetId()))
+			issues.RaiseIssue("Can we delete", fmt.Sprintf("https://www.discogs.com/madeup/release/%v", record.GetRecord().GetRelease().GetId()))
 		}
 	}
 
-	s.CtxLog(ctx, fmt.Sprintf("Running proc with %v done today", today))
+	s.log(ctx, fmt.Sprintf("Running proc with %v done today", today))
 	for _, item := range config.Items {
 		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
 			// Skip processing when we've done 20 in a day
-			if time.Since(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 || today >= 30 {
-				s.CtxLog(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, time.Since(time.Unix(config.GetLastProcess(), 0))))
+			if s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 || today >= 30 {
+				s.log(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0))))
 				continue
 			}
-			s.CtxLog(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
+			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v (%v)", item.GetAlbumId(), item, today))
 
 			if config.IssueIds[item.GetAlbumId()] == 0 {
-				issue, err := s.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false, false)
+				issue, err := issues.ImmediateIssue(ctx, fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId()), fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()), false, false)
 				if err != nil {
 					return nil, err
 				}
@@ -89,34 +92,27 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			}
 			return &rcpb.ClientUpdateResponse{}, nil
 		} else if val > 0 && config.AddedDate[val] == 0 {
-			conn, err := s.FDialServer(ctx, "recordcollection")
-			if err != nil {
-				return nil, err
-			}
-			defer conn.Close()
-
-			client := rcpb.NewRecordCollectionServiceClient(conn)
-			iids, err := client.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{val}})
+			iids, err := rc.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{ReleaseId: val}})
 			if err != nil {
 				return nil, err
 			}
 			for _, iid := range iids.GetInstanceIds() {
-				rec, err := client.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: iid})
+				rec, err := rc.GetRecord(ctx, &rcpb.GetRecordRequest{InstanceId: iid})
 				if err != nil {
 					return nil, err
 				}
 
 				if rec.GetRecord().GetMetadata().GetGoalFolder() == 1782105 {
-					config.AddedDate[val] = time.Now().Unix()
+					config.AddedDate[val] = s.nowTime().Unix()
 					return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 				}
 			}
 
 			if config.AddedDate[val] > 0 {
-				s.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v from %v at %v", val, item, config.AddedDate[val]))
+				issues.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v from %v at %v", val, item, config.AddedDate[val]))
 				return nil, fmt.Errorf("Oveerlap issue")
 			}
-			_, err = client.AddRecord(ctx, &rcpb.AddRecordRequest{
+			_, err = rc.AddRecord(ctx, &rcpb.AddRecordRequest{
 				ToAdd: &rcpb.Record{
 					Release: &rcgd.Release{
 						Id: val,
@@ -124,9 +120,9 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 					Metadata: &rcpb.ReleaseMetadata{
 						Cost:           1,
 						GoalFolder:     1782105,
-						PurchaseBudget: fmt.Sprintf("float%v", time.Now().Year()),
+						PurchaseBudget: fmt.Sprintf("float%v", s.nowTime().Year()),
 						FiledUnder:     rcpb.ReleaseMetadata_FILE_DIGITAL,
-						DateArrived:    time.Now().Unix(),
+						DateArrived:    s.nowTime().Unix(),
 					},
 				},
 			})
@@ -135,7 +131,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				return nil, err
 			}
 
-			config.AddedDate[val] = time.Now().Unix()
+			config.AddedDate[val] = s.nowTime().Unix()
 			return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 		}
 	}
@@ -173,7 +169,7 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
 
 	if config.IssueIds[req.GetBandcampId()] > 0 {
-		err := s.DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
+		err := s.getIssueManager().DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
 		if err != nil {
 			return nil, fmt.Errorf("unable to remove issue: %w", err)
 		}
