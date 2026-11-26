@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/brotherlogic/bandcamplib"
 	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	pb "github.com/brotherlogic/bandcampserver/proto"
+	recordcollection_client "github.com/brotherlogic/recordcollection/client"
+	rcpb "github.com/brotherlogic/recordcollection/proto"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -302,4 +305,125 @@ func TestRefreshStartupToken_ActiveContextAndResilience(t *testing.T) {
 			t.Errorf("startup log leaked identity cookie: %q", entry)
 		}
 	}
+}
+
+func TestProdRCClient_SearchReleases(t *testing.T) {
+	t.Run("delegates request and returns response", func(t *testing.T) {
+		var gotReq *rcpb.SearchReleasesRequest
+		wantResp := &rcpb.SearchReleasesResponse{
+			Results: []*rcpb.SearchReleaseResult{
+				{
+					ReleaseId: 12345,
+					Title:     "Test Artist - Test Album",
+					Year:      "2025",
+					Formats:   []string{"File", "WAV"},
+					Url:       "https://www.discogs.com/release/12345",
+				},
+			},
+		}
+
+		s := &Server{
+			rcclient: &recordcollection_client.RecordCollectionClient{
+				Test: true,
+				SearchFunc: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+					gotReq = req
+					return wantResp, nil
+				},
+			},
+		}
+		var rc rcClient = &prodRCClient{server: s}
+
+		req := &rcpb.SearchReleasesRequest{
+			Artist:       "Test Artist",
+			ReleaseTitle: "Test Album",
+			Format:       "File",
+			PerPage:      10,
+		}
+		gotResp, err := rc.SearchReleases(context.Background(), req)
+		if err != nil {
+			t.Fatalf("SearchReleases returned unexpected error: %v", err)
+		}
+		if gotReq == nil {
+			t.Fatal("SearchFunc was not invoked")
+		}
+		if gotReq.GetArtist() != req.GetArtist() || gotReq.GetReleaseTitle() != req.GetReleaseTitle() || gotReq.GetFormat() != req.GetFormat() || gotReq.GetPerPage() != req.GetPerPage() {
+			t.Errorf("SearchFunc received %+v, want %+v", gotReq, req)
+		}
+		if !proto.Equal(gotResp, wantResp) {
+			t.Errorf("SearchReleases response = %+v, want %+v", gotResp, wantResp)
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		wantErr := errors.New("search failed")
+		s := &Server{
+			rcclient: &recordcollection_client.RecordCollectionClient{
+				Test: true,
+				SearchFunc: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+					return nil, wantErr
+				},
+			},
+		}
+		var rc rcClient = &prodRCClient{server: s}
+
+		gotResp, err := rc.SearchReleases(context.Background(), &rcpb.SearchReleasesRequest{Artist: "Test Artist"})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("SearchReleases error = %v, want %v", err, wantErr)
+		}
+		if gotResp != nil {
+			t.Errorf("expected nil response on error, got %+v", gotResp)
+		}
+	})
+}
+
+func TestDiscogsCandidateLookupTotalMetric(t *testing.T) {
+	outcomes := []string{"digital", "fallback", "none", "skipped", "error"}
+	for _, outcome := range outcomes {
+		before := testutil.ToFloat64(discogsCandidateLookupTotal.WithLabelValues(outcome))
+		discogsCandidateLookupTotal.WithLabelValues(outcome).Inc()
+		after := testutil.ToFloat64(discogsCandidateLookupTotal.WithLabelValues(outcome))
+		if after != before+1 {
+			t.Errorf("discogsCandidateLookupTotal[%q] = %v, want %v", outcome, after, before+1)
+		}
+	}
+}
+
+func TestClientUpdateFakeRCClient_SearchReleases(t *testing.T) {
+	t.Run("default empty response and records call", func(t *testing.T) {
+		fake := &clientUpdateFakeRCClient{}
+		req := &rcpb.SearchReleasesRequest{Artist: "Artist", ReleaseTitle: "Album"}
+		resp, err := fake.SearchReleases(context.Background(), req)
+		if err != nil {
+			t.Fatalf("SearchReleases returned unexpected error: %v", err)
+		}
+		if resp == nil || len(resp.GetResults()) != 0 {
+			t.Errorf("expected empty response, got %+v", resp)
+		}
+		if len(fake.searchCalls) != 1 || fake.searchCalls[0] != req {
+			t.Errorf("searchCalls = %+v, want [%+v]", fake.searchCalls, req)
+		}
+	})
+
+	t.Run("delegates to searchFn when provided", func(t *testing.T) {
+		wantResp := &rcpb.SearchReleasesResponse{
+			Results: []*rcpb.SearchReleaseResult{{ReleaseId: 99, Title: "Match"}},
+		}
+		wantErr := errors.New("boom")
+		fake := &clientUpdateFakeRCClient{
+			searchFn: func(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+				return wantResp, wantErr
+			},
+		}
+		req := &rcpb.SearchReleasesRequest{Artist: "Artist 2"}
+		resp, err := fake.SearchReleases(context.Background(), req)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("error = %v, want %v", err, wantErr)
+		}
+		if !proto.Equal(resp, wantResp) {
+			t.Errorf("resp = %+v, want %+v", resp, wantResp)
+		}
+		if len(fake.searchCalls) != 1 || fake.searchCalls[0] != req {
+			t.Errorf("searchCalls = %+v, want [%+v]", fake.searchCalls, req)
+		}
+	})
 }

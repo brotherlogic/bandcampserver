@@ -66,6 +66,10 @@ var (
 		Name: "bandcampserver_auth_valid",
 		Help: "Whether Bandcamp cookie authentication is currently valid",
 	})
+	discogsCandidateLookupTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bandcampserver_discogs_candidate_lookup_total",
+		Help: "Total Discogs candidate lookups performed when opening missing-mapping issues",
+	}, []string{"outcome"})
 )
 
 type configStore interface {
@@ -91,6 +95,7 @@ type rcClient interface {
 	GetRecord(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error)
 	QueryRecords(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error)
 	AddRecord(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error)
+	SearchReleases(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error)
 }
 
 type dstoreConfigStore struct {
@@ -133,6 +138,10 @@ func (p *prodRCClient) AddRecord(ctx context.Context, req *rcpb.AddRecordRequest
 
 	client := rcpb.NewRecordCollectionServiceClient(conn)
 	return client.AddRecord(ctx, req)
+}
+
+func (p *prodRCClient) SearchReleases(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
+	return p.server.rcclient.SearchReleases(ctx, req)
 }
 
 // Server main server type
@@ -338,7 +347,7 @@ func (s *Server) save(ctx context.Context, data []byte, key string) error {
 	return nil
 }
 
-func (s *Server) loadRecord(ctx context.Context, id int32) (*rcpb.Record, error) {
+func (s *Server) loadRecord(ctx context.Context, id int64) (*rcpb.Record, error) {
 	conn, err := s.FDialServer(ctx, "recordcollection")
 	if err != nil {
 		return nil, err
