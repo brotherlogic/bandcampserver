@@ -98,17 +98,8 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 						s.log(ctx, fmt.Sprintf("Failed to clear Bandcamp auth alert: %v", sanitizeError(clearErr, initialCookie, config.GetIdentityCookie())))
 					}
 					title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
-					body := redactCookie(
-						fmt.Sprintf(
-							"%v - %v (%v) is missing a mapping\n\nDirect WAV download link: %s\n\nNote: Bandcamp direct download links are time-limited and may expire over time.",
-							item.GetBandName(),
-							item.GetAlbumTitle(),
-							albumID,
-							wavURL,
-						),
-						initialCookie,
-						config.GetIdentityCookie(),
-					)
+					candidates := s.lookupDiscogsCandidates(ctx, rc, item, initialCookie, config.GetIdentityCookie())
+					body := buildMissingMappingIssueBody(item, wavURL, maxDownloadLinkFailures, candidates, initialCookie, config.GetIdentityCookie())
 					issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
 					if issueErr != nil {
 						return nil, sanitizeError(issueErr, initialCookie, config.GetIdentityCookie())
@@ -152,13 +143,8 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v (attempt %d/%d, falling back to linkless issue): %v", albumID, failures, maxDownloadLinkFailures, sanitizedErr))
 
 				title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
-				body := fmt.Sprintf(
-					"%v - %v (%v) is missing a mapping\n\nNote: WAV download link generation failed after %d attempts.",
-					item.GetBandName(),
-					item.GetAlbumTitle(),
-					albumID,
-					maxDownloadLinkFailures,
-				)
+				candidates := s.lookupDiscogsCandidates(ctx, rc, item, initialCookie, config.GetIdentityCookie())
+				body := buildMissingMappingIssueBody(item, "", maxDownloadLinkFailures, candidates, initialCookie, config.GetIdentityCookie())
 				issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
 				if issueErr != nil {
 					return nil, sanitizeError(issueErr, initialCookie, config.GetIdentityCookie())
