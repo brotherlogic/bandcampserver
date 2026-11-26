@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
 	"testing"
 
 	"github.com/brotherlogic/bandcamplib"
 	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	pb "github.com/brotherlogic/bandcampserver/proto"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -114,11 +111,6 @@ func TestBandcamplibSymbolsAccessible(t *testing.T) {
 	}
 }
 
-func TestSetCookieStubUnimplemented(t *testing.T) {
+func TestBandcampServerServiceInterface(t *testing.T) {
 	var _ pb.BandcampServerServiceServer = (*Server)(nil)
-
-	_, err := (&Server{}).SetCookie(context.Background(), &pb.SetCookieRequest{Cookie: "val"})
-	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("SetCookie status code = %v, want %v (err=%v)", status.Code(err), codes.Unimplemented, err)
-	}
 }

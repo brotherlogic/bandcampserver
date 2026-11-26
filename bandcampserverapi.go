@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/net/context"
@@ -9,7 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/brotherlogic/bandcamplib"
-	"github.com/brotherlogic/bandcamplib/proto"
+	bcpb "github.com/brotherlogic/bandcamplib/proto"
 
 	pb "github.com/brotherlogic/bandcampserver/proto"
 	rcgd "github.com/brotherlogic/godiscogs/proto"
@@ -140,33 +142,77 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 }
 
 func (s *Server) SetToken(ctx context.Context, req *pb.SetTokenRequest) (*pb.SetTokenResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	config, err := s.loadConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	config.Token = req.GetToken()
-	config.LastTokenRefresh = time.Now().Unix()
+	config.LastTokenRefresh = s.nowTime().Unix()
 
-	items, err := bandcamplib.RetrieveItems(&proto.Config{User: 873256, Token: config.Token})
-	if err != nil {
-		return nil, err
+	retrieveUnauthenticated := func() ([]*bcpb.Item, error) {
+		client, err := s.getBandcampClientFactory()(&bcpb.Config{
+			User:  bandcampUserID,
+			Token: config.GetToken(),
+		}, nil)
+		if err != nil {
+			return nil, err
+		}
+		return client.RetrieveItems(ctx)
 	}
 
-	s.CtxLog(ctx, fmt.Sprintf("Read %v items", len(items)))
+	var items []*bcpb.Item
+	if strings.TrimSpace(config.GetIdentityCookie()) != "" {
+		authErr := s.withBandcampClient(ctx, config, func(client bandcampClient) error {
+			var retrieveErr error
+			items, retrieveErr = client.RetrieveItems(ctx)
+			return retrieveErr
+		})
+		if authErr == nil {
+			if clearErr := s.clearAuthAlert(ctx, config); clearErr != nil {
+				s.log(ctx, fmt.Sprintf("Failed to clear Bandcamp auth alert: %v", sanitizeError(clearErr, config.GetIdentityCookie())))
+			}
+		} else if errors.Is(authErr, bandcamplib.ErrAuthenticationFailed) {
+			if alertErr := s.ensureAuthAlert(ctx, config, "Bandcamp session cookie expired while refreshing items."); alertErr != nil {
+				s.log(ctx, fmt.Sprintf("Failed to ensure Bandcamp auth alert: %v", sanitizeError(alertErr, config.GetIdentityCookie())))
+			}
+			s.log(ctx, fmt.Sprintf("Bandcamp cookie auth failed during SetToken, falling back to unauthenticated retrieval: %v", sanitizeError(authErr, config.GetIdentityCookie())))
+			items, err = retrieveUnauthenticated()
+			if err != nil {
+				return nil, sanitizeError(err, config.GetIdentityCookie())
+			}
+		} else {
+			return nil, sanitizeError(authErr, config.GetIdentityCookie())
+		}
+	} else {
+		items, err = retrieveUnauthenticated()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	s.log(ctx, fmt.Sprintf("Read %v items", len(items)))
 
 	config.Items = items
+	updateAuthMetrics(config)
 
-	return &pb.SetTokenResponse{}, s.saveConfig(ctx, config)
+	return &pb.SetTokenResponse{}, sanitizeError(s.saveConfig(ctx, config), config.GetIdentityCookie())
 }
 
 func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb.AddMappingResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	config, err := s.loadConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
+	delete(config.DownloadLinkFailures, req.GetBandcampId())
 
 	if config.IssueIds[req.GetBandcampId()] > 0 {
 		err := s.getIssueManager().DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
@@ -175,12 +221,15 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 		}
 	}
 
-	config.LastProcess = time.Now().Unix()
+	config.LastProcess = s.nowTime().Unix()
 
 	return &pb.AddMappingResponse{}, s.saveConfig(ctx, config)
 }
 
 func (s *Server) Reset(ctx context.Context, req *pb.ResetRequest) (*pb.ResetResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	config, err := s.loadConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -192,5 +241,51 @@ func (s *Server) Reset(ctx context.Context, req *pb.ResetRequest) (*pb.ResetResp
 }
 
 func (s *Server) SetCookie(ctx context.Context, req *pb.SetCookieRequest) (*pb.SetCookieResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "SetCookie not yet implemented")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	normalizedCookie, err := normalizeCookieInput(req.GetCookie())
+	if err != nil {
+		return nil, err
+	}
+
+	config, err := s.loadConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	previousCookie := config.GetIdentityCookie()
+	candidateCfg := &pb.Config{
+		Token:          config.GetToken(),
+		IdentityCookie: normalizedCookie,
+	}
+	tracker, err := s.newTrackedBandcampClient(candidateCfg)
+	if err != nil {
+		return nil, sanitizeError(err, req.GetCookie(), normalizedCookie, previousCookie)
+	}
+
+	items, err := tracker.client.RetrieveItems(ctx)
+	refreshed := tracker.detectRefreshedCookie(normalizedCookie)
+	if err != nil {
+		return nil, sanitizeError(err, req.GetCookie(), normalizedCookie, refreshed, previousCookie)
+	}
+
+	effectiveCookie := normalizedCookie
+	if refreshed != "" {
+		effectiveCookie = refreshed
+	}
+	config.IdentityCookie = effectiveCookie
+	config.LastCookieRefresh = s.nowTime().Unix()
+	config.Items = items
+	updateAuthMetrics(config)
+
+	clearErr := s.clearAuthAlert(ctx, config)
+	if err := s.saveConfig(ctx, config); err != nil {
+		return nil, sanitizeError(err, req.GetCookie(), normalizedCookie, effectiveCookie, previousCookie)
+	}
+	if clearErr != nil {
+		return nil, sanitizeError(clearErr, req.GetCookie(), normalizedCookie, effectiveCookie, previousCookie)
+	}
+
+	return &pb.SetCookieResponse{}, nil
 }
