@@ -261,17 +261,22 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 
 	if config.IssueIds[bcID] > 0 {
 		err := s.getIssueManager().DeleteIssue(ctx, config.IssueIds[bcID])
-		if err != nil {
+		if err != nil && !isIssueAlreadyClosedOrNotFound(err) {
 			return nil, sanitizeError(fmt.Errorf("unable to remove issue: %w", err), config.GetIdentityCookie())
 		}
+		delete(config.IssueIds, bcID)
 	}
 
 	if discogsID > 0 {
-		prevAlertID := config.PendingDownloads[bcID].GetAlertIssueId()
+		if existing := config.PendingDownloads[bcID]; existing != nil {
+			if err := s.closeDownloadAlert(ctx, config, existing); err != nil {
+				s.log(ctx, fmt.Sprintf("Failed to close download alert for %d: %v", bcID, sanitizeError(err, config.GetIdentityCookie())))
+			}
+		}
 		config.PendingDownloads[bcID] = &pb.DownloadJob{
 			DiscogsId:    discogsID,
 			State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
-			AlertIssueId: prevAlertID,
+			AlertIssueId: 0,
 		}
 	} else if job, ok := config.PendingDownloads[bcID]; ok {
 		if job.GetAlertIssueId() > 0 {
@@ -411,10 +416,11 @@ func (s *Server) TriggerDownload(ctx context.Context, req *pb.TriggerDownloadReq
 		}, nil
 	}
 
-	var alertIssueID int32
 	var instanceID int64
 	if existing != nil {
-		alertIssueID = existing.GetAlertIssueId()
+		if err := s.closeDownloadAlert(ctx, config, existing); err != nil {
+			s.log(ctx, fmt.Sprintf("Failed to close download alert for %d: %v", bandcampID, sanitizeError(err, config.GetIdentityCookie())))
+		}
 		if existing.GetDiscogsId() == discogsID {
 			instanceID = existing.GetInstanceId()
 		}
@@ -427,7 +433,7 @@ func (s *Server) TriggerDownload(ctx context.Context, req *pb.TriggerDownloadReq
 		Attempts:     0,
 		LastAttempt:  0,
 		LastError:    "",
-		AlertIssueId: alertIssueID,
+		AlertIssueId: 0,
 	}
 	updateDownloadMetrics(config)
 
