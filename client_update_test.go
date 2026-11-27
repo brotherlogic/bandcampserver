@@ -16,6 +16,7 @@ import (
 	cdpb "github.com/brotherlogic/cdprocessor/proto"
 	rcgd "github.com/brotherlogic/godiscogs/proto"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type clientUpdateFakeRCClient struct {
@@ -195,12 +196,15 @@ func TestClientUpdate_MissingMappingIssueCreation_NoWAVLinkResolution(t *testing
 				t.Errorf("issue title = %q, want %q", calls[0].title, wantTitle)
 			}
 			for _, wantSubstr := range []string{
-				fmt.Sprintf("%v - %v (%v) is missing a mapping", tc.item.GetBandName(), tc.item.GetAlbumTitle(), tc.item.GetAlbumId()),
+				fmt.Sprintf("%v - %v (%v) is missing a mapping\n\nBandcamp: Link unavailable", tc.item.GetBandName(), tc.item.GetAlbumTitle(), tc.item.GetAlbumId()),
 				"### Discogs Candidate Releases",
 			} {
 				if !strings.Contains(calls[0].body, wantSubstr) {
 					t.Errorf("issue body missing %q:\n%s", wantSubstr, calls[0].body)
 				}
+			}
+			if strings.Contains(calls[0].body, tc.item.GetRedownloadUrl()) {
+				t.Errorf("issue body must not expose RedownloadUrl %q:\n%s", tc.item.GetRedownloadUrl(), calls[0].body)
 			}
 			for _, forbidden := range []string{
 				"Direct WAV download link",
@@ -1007,7 +1011,7 @@ func TestClientUpdate_DiscogsCandidates_Digital(t *testing.T) {
 		t.Errorf("issue title = %q, want %q", calls[0].title, wantTitle)
 	}
 	for _, wantSubstr := range []string{
-		fmt.Sprintf("%v - %v (%v) is missing a mapping", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()),
+		fmt.Sprintf("%v - %v (%v) is missing a mapping\n\nBandcamp: Link unavailable", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId()),
 		"### Candidate Discogs Digital Releases",
 		"https://www.discogs.com/release/555001",
 		"bandcampserver_cli mapping -bandcamp 1101 -discogs 555001",
@@ -1105,6 +1109,7 @@ func TestClientUpdate_DiscogsCandidates_NonDigitalFallback(t *testing.T) {
 		t.Fatalf("expected 1 ImmediateIssue call, got %d", len(calls))
 	}
 	for _, wantSubstr := range []string{
+		"Bandcamp: Link unavailable",
 		"### Discogs Candidate Releases (Reference Only)",
 		"Vinyl Artist - Vinyl Album",
 		"2023 — Vinyl, LP",
@@ -1175,7 +1180,7 @@ func TestClientUpdate_DiscogsCandidates_SearchFailureResilience(t *testing.T) {
 		t.Fatalf("expected 1 ImmediateIssue call, got %d", len(calls))
 	}
 	for _, want := range []string{
-		"Resilient Artist - Resilient Album (1104) is missing a mapping",
+		"Resilient Artist - Resilient Album (1104) is missing a mapping\n\nBandcamp: Link unavailable",
 		"Note: Discogs candidate lookup failed; please search Discogs manually.",
 	} {
 		if !strings.Contains(calls[0].body, want) {
@@ -2819,4 +2824,410 @@ func TestClientUpdate_Phase1_InvalidAddRecordInstanceID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func snapshotBandcampURLMetric() map[bandcampURLOutcome]float64 {
+	outcomes := []bandcampURLOutcome{bandcampURLAvailable, bandcampURLUnavailable, bandcampURLInvalid}
+	snap := make(map[bandcampURLOutcome]float64, len(outcomes))
+	for _, o := range outcomes {
+		snap[o] = testutil.ToFloat64(missingMappingBandcampURLTotal.WithLabelValues(string(o)))
+	}
+	return snap
+}
+
+func assertBandcampURLMetricDelta(t *testing.T, before map[bandcampURLOutcome]float64, want map[bandcampURLOutcome]float64) {
+	t.Helper()
+	after := snapshotBandcampURLMetric()
+	for _, o := range []bandcampURLOutcome{bandcampURLAvailable, bandcampURLUnavailable, bandcampURLInvalid} {
+		gotDelta := after[o] - before[o]
+		if gotDelta != want[o] {
+			t.Errorf("bandcampserver_missing_mapping_bandcamp_url_total{outcome=%q} delta = %v, want %v", o, gotDelta, want[o])
+		}
+	}
+}
+
+func TestClientUpdate_MissingMapping_BandcampURLAndMetric(t *testing.T) {
+	fixedNow := time.Unix(1700320000, 0)
+
+	tests := []struct {
+		name           string
+		item           *bcpb.Item
+		wantLine       string
+		wantOutcome    bandcampURLOutcome
+		forbiddenSub   string
+		wantIssueCount int
+	}{
+		{
+			name: "available standard bandcamp album URL",
+			item: &bcpb.Item{
+				AlbumId:       6101,
+				BandName:      "Album Band",
+				AlbumTitle:    "Standard Album",
+				ItemUrl:       "https://albumband.bandcamp.com/album/standard-album",
+				RedownloadUrl: "https://bandcamp.com/download/album?id=6101&sig=secret-album",
+			},
+			wantLine:       "Bandcamp: https://albumband.bandcamp.com/album/standard-album",
+			wantOutcome:    bandcampURLAvailable,
+			forbiddenSub:   "https://bandcamp.com/download/album?id=6101&sig=secret-album",
+			wantIssueCount: 1,
+		},
+		{
+			name: "available single-track URL",
+			item: &bcpb.Item{
+				AlbumId:    6102,
+				BandName:   "Track Band",
+				AlbumTitle: "Single Track",
+				ItemUrl:    "https://trackband.bandcamp.com/track/single-track",
+			},
+			wantLine:       "Bandcamp: https://trackband.bandcamp.com/track/single-track",
+			wantOutcome:    bandcampURLAvailable,
+			wantIssueCount: 1,
+		},
+		{
+			name: "available custom artist domain URL",
+			item: &bcpb.Item{
+				AlbumId:    6103,
+				BandName:   "Custom Domain Band",
+				AlbumTitle: "Custom Release",
+				ItemUrl:    "https://music.customdomain.example/album/custom-release",
+			},
+			wantLine:       "Bandcamp: https://music.customdomain.example/album/custom-release",
+			wantOutcome:    bandcampURLAvailable,
+			wantIssueCount: 1,
+		},
+		{
+			name: "unavailable pre-upgrade cached item without ItemUrl and with RedownloadUrl",
+			item: &bcpb.Item{
+				AlbumId:       6104,
+				BandName:      "PreUpgrade Band",
+				AlbumTitle:    "Cached Album",
+				ItemUrl:       "",
+				RedownloadUrl: "https://bandcamp.com/download/album?id=6104&sig=private-sig",
+			},
+			wantLine:       bandcampLinkUnavailableText,
+			wantOutcome:    bandcampURLUnavailable,
+			forbiddenSub:   "https://bandcamp.com/download/album?id=6104&sig=private-sig",
+			wantIssueCount: 1,
+		},
+		{
+			name: "invalid javascript scheme URL",
+			item: &bcpb.Item{
+				AlbumId:    6105,
+				BandName:   "Unsafe Band",
+				AlbumTitle: "Unsafe JS",
+				ItemUrl:    "javascript:alert(1)",
+			},
+			wantLine:       bandcampLinkUnavailableText,
+			wantOutcome:    bandcampURLInvalid,
+			forbiddenSub:   "javascript:alert(1)",
+			wantIssueCount: 1,
+		},
+		{
+			name: "invalid private relative download URL",
+			item: &bcpb.Item{
+				AlbumId:    6106,
+				BandName:   "Private Band",
+				AlbumTitle: "Private Download",
+				ItemUrl:    "/download?id=1&sig=abc",
+			},
+			wantLine:       bandcampLinkUnavailableText,
+			wantOutcome:    bandcampURLInvalid,
+			forbiddenSub:   "/download?id=1&sig=abc",
+			wantIssueCount: 1,
+		},
+		{
+			name: "invalid private absolute download URL",
+			item: &bcpb.Item{
+				AlbumId:    6107,
+				BandName:   "Private Band 2",
+				AlbumTitle: "Private Download 2",
+				ItemUrl:    "https://bandcamp.com/download?id=1&sig=abc",
+			},
+			wantLine:       bandcampLinkUnavailableText,
+			wantOutcome:    bandcampURLInvalid,
+			forbiddenSub:   "https://bandcamp.com/download?id=1&sig=abc",
+			wantIssueCount: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			before := snapshotBandcampURLMetric()
+			store := newAPITestConfigStore(t, &pb.Config{
+				Token:          "tok-1",
+				IdentityCookie: "valid-cookie",
+				LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+				Items:          []*bcpb.Item{tc.item},
+			})
+			issues := &apiTestIssueManager{nextIssueID: 710}
+			var bcCalls int
+
+			s := &Server{
+				store:  store,
+				issues: issues,
+				rc:     newDefaultClientUpdateRC(),
+				bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+					bcCalls++
+					return nil, errors.New("bandcamp client must not be called")
+				},
+				now:     func() time.Time { return fixedNow },
+				logFunc: (&apiTestLogger{}).log,
+			}
+
+			if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+				t.Fatalf("ClientUpdate failed: %v", err)
+			}
+			if bcCalls != 0 {
+				t.Errorf("expected 0 Bandcamp client calls, got %d", bcCalls)
+			}
+
+			calls := issues.immediateSnapshot()
+			if len(calls) != tc.wantIssueCount {
+				t.Fatalf("expected %d ImmediateIssue calls, got %d", tc.wantIssueCount, len(calls))
+			}
+
+			wantPrefix := fmt.Sprintf("%s - %s (%d) is missing a mapping\n\n%s\n\n### Discogs Candidate Releases",
+				tc.item.GetBandName(), tc.item.GetAlbumTitle(), tc.item.GetAlbumId(), tc.wantLine)
+			if !strings.HasPrefix(calls[0].body, wantPrefix) {
+				t.Errorf("issue body does not start with %q:\n%s", wantPrefix, calls[0].body)
+			}
+			if tc.forbiddenSub != "" && strings.Contains(calls[0].body, tc.forbiddenSub) {
+				t.Errorf("issue body must not contain %q:\n%s", tc.forbiddenSub, calls[0].body)
+			}
+
+			assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{
+				tc.wantOutcome: 1,
+			})
+		})
+	}
+}
+
+func TestClientUpdate_MissingMapping_BandcampURLMetricNotIncrementedOnSkipOrError(t *testing.T) {
+	fixedNow := time.Unix(1700330000, 0)
+	baseItem := &bcpb.Item{
+		AlbumId:    6201,
+		BandName:   "Skipped Artist",
+		AlbumTitle: "Skipped Album",
+		ItemUrl:    "https://skippedartist.bandcamp.com/album/skipped-album",
+	}
+
+	t.Run("cooldown skip", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-1 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{baseItem},
+		})
+		s := &Server{
+			store:   store,
+			issues:  &apiTestIssueManager{},
+			rc:      newDefaultClientUpdateRC(),
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate failed: %v", err)
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
+
+	t.Run("daily limit skip", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		added := make(map[int32]int64, 30)
+		for i := int32(1); i <= 30; i++ {
+			added[i] = fixedNow.Add(-1 * time.Hour).Unix()
+		}
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			AddedDate:      added,
+			Items:          []*bcpb.Item{baseItem},
+		})
+		s := &Server{
+			store:   store,
+			issues:  &apiTestIssueManager{},
+			rc:      newDefaultClientUpdateRC(),
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate failed: %v", err)
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
+
+	t.Run("already has open issue", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{baseItem},
+			IssueIds:       map[int64]int32{baseItem.GetAlbumId(): 55},
+		})
+		s := &Server{
+			store:   store,
+			issues:  &apiTestIssueManager{},
+			rc:      newDefaultClientUpdateRC(),
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate failed: %v", err)
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
+
+	t.Run("ImmediateIssue error", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{baseItem},
+		})
+		s := &Server{
+			store:   store,
+			issues:  &apiTestIssueManager{immediateErr: errors.New("github unavailable")},
+			rc:      newDefaultClientUpdateRC(),
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err == nil {
+			t.Fatal("expected ImmediateIssue error, got nil")
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
+}
+
+func TestClientUpdate_NonMappingIssuesUnchangedAndNoBandcampMetric(t *testing.T) {
+	fixedNow := time.Unix(1700340000, 0)
+
+	t.Run("Can we delete issue unchanged", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+		})
+		issues := &apiTestIssueManager{}
+		rc := newDefaultClientUpdateRC()
+		rc.hasFileFmt = false
+		s := &Server{
+			store:   store,
+			issues:  issues,
+			rc:      rc,
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate failed: %v", err)
+		}
+		raises := issues.raiseSnapshot()
+		if len(raises) != 1 || raises[0].title != "Can we delete" {
+			t.Fatalf("expected 1 Can we delete issue, got %+v", raises)
+		}
+		if raises[0].body != "https://www.discogs.com/madeup/release/1001" {
+			t.Errorf("Can we delete body = %q, want unchanged", raises[0].body)
+		}
+		if len(issues.immediateSnapshot()) != 0 {
+			t.Errorf("expected 0 ImmediateIssue calls, got %d", len(issues.immediateSnapshot()))
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
+
+	t.Run("auth alert unchanged", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		store := newAPITestConfigStore(t, &pb.Config{
+			Token:          "tok-1",
+			IdentityCookie: "expired-cookie",
+		})
+		issues := &apiTestIssueManager{nextIssueID: 881}
+		s := &Server{
+			store:  store,
+			issues: issues,
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				if cfg.GetIdentityCookie() != "" {
+					return &clientUpdateFakeBandcampClient{
+						identityCookie: cfg.GetIdentityCookie(),
+						onRefresh:      onRefresh,
+						retrieveFn: func(ctx context.Context, _ func(string)) ([]*bcpb.Item, error) {
+							return nil, bandcamplib.ErrAuthenticationFailed
+						},
+					}, nil
+				}
+				return &clientUpdateFakeBandcampClient{
+					retrieveFn: func(ctx context.Context, _ func(string)) ([]*bcpb.Item, error) {
+						return []*bcpb.Item{{AlbumId: 1, ItemUrl: "https://artist.bandcamp.com/album/a"}}, nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.SetToken(context.Background(), &pb.SetTokenRequest{Token: "tok-2"}); err != nil {
+			t.Fatalf("SetToken failed: %v", err)
+		}
+		calls := issues.immediateSnapshot()
+		if len(calls) != 1 || calls[0].title != "Bandcamp session cookie missing or expired" {
+			t.Fatalf("expected 1 auth alert issue, got %+v", calls)
+		}
+		if strings.Contains(calls[0].body, "Bandcamp:") {
+			t.Errorf("auth alert body should not contain Bandcamp link line:\n%s", calls[0].body)
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
+
+	t.Run("download failure alert unchanged", func(t *testing.T) {
+		before := snapshotBandcampURLMetric()
+		item := &bcpb.Item{
+			AlbumId:       6301,
+			BandName:      "DL Artist",
+			AlbumTitle:    "DL Album",
+			RedownloadUrl: "https://bandcamp.com/download/album?id=6301",
+			ItemUrl:       "https://dlartist.bandcamp.com/album/dl-album",
+		}
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{item},
+			Mapping:        map[int64]int32{6301: 9301},
+			AddedDate:      map[int32]int64{9301: fixedNow.Unix()},
+			PendingDownloads: map[int64]*pb.DownloadJob{
+				6301: {
+					DiscogsId:  9301,
+					InstanceId: 1001,
+					State:      pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED,
+				},
+			},
+		})
+		issues := &apiTestIssueManager{nextIssueID: 882}
+		cd := &downloadsTestCDClient{
+			statusFn: func(ctx context.Context, req *cdpb.GetDownloadStatusRequest) (*cdpb.GetDownloadStatusResponse, error) {
+				return &cdpb.GetDownloadStatusResponse{
+					State:        cdpb.DownloadState_DOWNLOAD_FAILED_PERMANENT,
+					ErrorMessage: "checksum mismatch",
+				}, nil
+			},
+		}
+		s := &Server{
+			store:    store,
+			issues:   issues,
+			rc:       newDefaultClientUpdateRC(),
+			cdClient: cd,
+			now:      func() time.Time { return fixedNow },
+			logFunc:  (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate failed: %v", err)
+		}
+		calls := issues.immediateSnapshot()
+		if len(calls) != 1 || !strings.Contains(calls[0].title, "Bandcamp WAV download failed") {
+			t.Fatalf("expected 1 download failure alert issue, got %+v", calls)
+		}
+		if strings.Contains(calls[0].body, "Bandcamp:") || strings.Contains(calls[0].body, "Link unavailable") {
+			t.Errorf("download failure alert should not contain missing-mapping Bandcamp link line:\n%s", calls[0].body)
+		}
+		assertBandcampURLMetricDelta(t, before, map[bandcampURLOutcome]float64{})
+	})
 }

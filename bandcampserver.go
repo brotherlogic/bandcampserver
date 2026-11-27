@@ -72,6 +72,10 @@ var (
 		Name: "bandcampserver_discogs_candidate_lookup_total",
 		Help: "Total Discogs candidate lookups performed when opening missing-mapping issues",
 	}, []string{"outcome"})
+	missingMappingBandcampURLTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bandcampserver_missing_mapping_bandcamp_url_total",
+		Help: "Total missing-mapping issues by Bandcamp public release URL status",
+	}, []string{"outcome"})
 	downloadJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "bandcampserver_download_jobs",
 		Help: "Current number of Bandcamp WAV download jobs by state",

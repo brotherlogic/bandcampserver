@@ -169,11 +169,12 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			cookie := config.GetIdentityCookie()
 			title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
 			candidates := s.lookupDiscogsCandidates(ctx, rc, item, cookie)
-			body := buildMissingMappingIssueBody(item, candidates, cookie)
+			body, bcURLOutcome := buildMissingMappingIssueBodyWithOutcome(item, candidates, cookie)
 			issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
 			if issueErr != nil {
 				return nil, sanitizeError(issueErr, cookie)
 			}
+			missingMappingBandcampURLTotal.WithLabelValues(string(bcURLOutcome)).Inc()
 			config.IssueIds[albumID] = issue.GetNumber()
 			config.LastProcess = s.nowTime().Unix()
 			return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), cookie)
