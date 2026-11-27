@@ -310,25 +310,13 @@ func formatDiscogsCandidatesSection(albumID int64, res discogsCandidateResult) s
 	}
 }
 
-func buildMissingMappingIssueBody(item *bcpb.Item, wavURL string, maxFailures int32, res discogsCandidateResult, cookies ...string) string {
-	var body string
-	if wavURL != "" {
-		body = fmt.Sprintf(
-			"%v - %v (%v) is missing a mapping\n\nDirect WAV download link: %s\n\nNote: Bandcamp direct download links are time-limited and may expire over time.",
-			item.GetBandName(),
-			item.GetAlbumTitle(),
-			item.GetAlbumId(),
-			wavURL,
-		)
-	} else {
-		body = fmt.Sprintf(
-			"%v - %v (%v) is missing a mapping\n\nNote: WAV download link generation failed after %d attempts.",
-			item.GetBandName(),
-			item.GetAlbumTitle(),
-			item.GetAlbumId(),
-			maxFailures,
-		)
-	}
+func buildMissingMappingIssueBody(item *bcpb.Item, res discogsCandidateResult, cookies ...string) string {
+	body := fmt.Sprintf(
+		"%v - %v (%v) is missing a mapping",
+		item.GetBandName(),
+		item.GetAlbumTitle(),
+		item.GetAlbumId(),
+	)
 
 	if section := formatDiscogsCandidatesSection(item.GetAlbumId(), res); section != "" {
 		body += "\n\n" + section
