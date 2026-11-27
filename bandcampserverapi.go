@@ -115,6 +115,9 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 
 				if rec.GetRecord().GetMetadata().GetGoalFolder() == 1782105 {
 					config.AddedDate[val] = s.nowTime().Unix()
+					if job := config.PendingDownloads[item.GetAlbumId()]; job != nil && iid > 0 {
+						job.InstanceId = iid
+					}
 					return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 				}
 			}
@@ -123,7 +126,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				issues.RaiseIssue("Bad add", fmt.Sprintf("We've already added %v from %v at %v", val, item, config.AddedDate[val]))
 				return nil, fmt.Errorf("Oveerlap issue")
 			}
-			_, err = rc.AddRecord(ctx, &rcpb.AddRecordRequest{
+			addResp, err := rc.AddRecord(ctx, &rcpb.AddRecordRequest{
 				ToAdd: &rcpb.Record{
 					Release: &rcgd.Release{
 						Id: val,
@@ -143,8 +146,17 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			}
 
 			config.AddedDate[val] = s.nowTime().Unix()
+			if job := config.PendingDownloads[item.GetAlbumId()]; job != nil {
+				if addedID := addResp.GetAdded().GetRelease().GetInstanceId(); addedID > 0 {
+					job.InstanceId = addedID
+				}
+			}
 			return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 		}
+	}
+
+	if err := s.processNextDownloadJob(ctx, config); err != nil {
+		return nil, err
 	}
 
 	return &rcpb.ClientUpdateResponse{}, nil
