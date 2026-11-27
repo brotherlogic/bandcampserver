@@ -125,11 +125,14 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 				return nil, err
 			}
 
+			addedID := addResp.GetAdded().GetRelease().GetInstanceId()
+			if addedID <= 0 {
+				return nil, fmt.Errorf("AddRecord returned invalid instance_id %d for discogs release %d", addedID, val)
+			}
+
 			config.AddedDate[val] = s.nowTime().Unix()
 			if job := config.PendingDownloads[item.GetAlbumId()]; job != nil {
-				if addedID := addResp.GetAdded().GetRelease().GetInstanceId(); addedID > 0 {
-					job.InstanceId = addedID
-				}
+				job.InstanceId = addedID
 			}
 			return &rcpb.ClientUpdateResponse{}, s.saveConfig(ctx, config)
 		}
