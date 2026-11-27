@@ -33,8 +33,6 @@ func (s *Server) Lookup(ctx context.Context, req *pb.LookupRequest) (*pb.LookupR
 	return nil, status.Errorf(codes.NotFound, "Could not find %v", req)
 }
 
-const maxDownloadLinkFailures int32 = 3
-
 // ClientUpdate on an updated record
 func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest) (*rcpb.ClientUpdateResponse, error) {
 	s.mu.Lock()
@@ -91,69 +89,18 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v - %v (%v)", albumID, item.GetBandName(), item.GetAlbumTitle(), today))
 
 			if config.IssueIds[albumID] == 0 {
-				initialCookie := config.GetIdentityCookie()
-				wavURL, err := s.resolveWAVLinkForItem(ctx, config, item)
-				if err == nil && wavURL != "" {
-					if clearErr := s.clearAuthAlert(ctx, config); clearErr != nil {
-						s.log(ctx, fmt.Sprintf("Failed to clear Bandcamp auth alert: %v", sanitizeError(clearErr, initialCookie, config.GetIdentityCookie())))
-					}
-					title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
-					candidates := s.lookupDiscogsCandidates(ctx, rc, item, initialCookie, config.GetIdentityCookie())
-					body := buildMissingMappingIssueBody(item, wavURL, maxDownloadLinkFailures, candidates, initialCookie, config.GetIdentityCookie())
-					issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
-					if issueErr != nil {
-						return nil, sanitizeError(issueErr, initialCookie, config.GetIdentityCookie())
-					}
-					config.IssueIds[albumID] = issue.GetNumber()
-					delete(config.DownloadLinkFailures, albumID)
-					return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), initialCookie, config.GetIdentityCookie())
-				}
-
-				if errors.Is(err, bandcamplib.ErrAuthenticationRequired) || errors.Is(err, bandcamplib.ErrAuthenticationFailed) {
-					sanitizedErr := sanitizeError(err, initialCookie, config.GetIdentityCookie())
-					s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v due to authentication error: %v", albumID, sanitizedErr))
-					reason := "Bandcamp session cookie expired or was rejected while resolving WAV download link."
-					if errors.Is(err, bandcamplib.ErrAuthenticationRequired) {
-						reason = "Bandcamp session cookie is missing while resolving WAV download link."
-					}
-					if alertErr := s.ensureAuthAlert(ctx, config, reason); alertErr != nil {
-						s.log(ctx, fmt.Sprintf("Failed to ensure Bandcamp auth alert: %v", sanitizeError(alertErr, initialCookie, config.GetIdentityCookie())))
-					}
-					return nil, sanitizedErr
-				}
-
-				if err == nil {
-					err = bandcamplib.ErrDownloadUnavailable
-				}
-				failures := config.DownloadLinkFailures[albumID] + 1
-				sanitizedErr := sanitizeError(err, initialCookie, config.GetIdentityCookie())
-				if failures < maxDownloadLinkFailures {
-					s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v (attempt %d/%d): %v", albumID, failures, maxDownloadLinkFailures, sanitizedErr))
-					config.DownloadLinkFailures[albumID] = failures
-					if saveErr := s.saveConfig(ctx, config); saveErr != nil {
-						return nil, sanitizeError(
-							fmt.Errorf("persist download link failure count: %w (after link resolution error: %w)", saveErr, err),
-							initialCookie,
-							config.GetIdentityCookie(),
-						)
-					}
-					return nil, sanitizedErr
-				}
-
-				s.log(ctx, fmt.Sprintf("Failed to resolve WAV download link for album %v (attempt %d/%d, falling back to linkless issue): %v", albumID, failures, maxDownloadLinkFailures, sanitizedErr))
-
+				cookie := config.GetIdentityCookie()
 				title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
-				candidates := s.lookupDiscogsCandidates(ctx, rc, item, initialCookie, config.GetIdentityCookie())
-				body := buildMissingMappingIssueBody(item, "", maxDownloadLinkFailures, candidates, initialCookie, config.GetIdentityCookie())
+				candidates := s.lookupDiscogsCandidates(ctx, rc, item, cookie)
+				body := buildMissingMappingIssueBody(item, candidates, cookie)
 				issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
 				if issueErr != nil {
-					return nil, sanitizeError(issueErr, initialCookie, config.GetIdentityCookie())
+					return nil, sanitizeError(issueErr, cookie)
 				}
 				config.IssueIds[albumID] = issue.GetNumber()
-				delete(config.DownloadLinkFailures, albumID)
-				return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), initialCookie, config.GetIdentityCookie())
+				return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), cookie)
 			}
-			return &rcpb.ClientUpdateResponse{}, nil
+			continue
 		} else if val > 0 && config.AddedDate[val] == 0 {
 			iids, err := rc.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{ReleaseId: val}})
 			if err != nil {

@@ -356,13 +356,12 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 		secret2 = "refreshed-secret-cookie-2"
 	)
 
-	t.Run("WAV-link path preserves base text, appends candidates, and redacts cookies everywhere", func(t *testing.T) {
+	t.Run("digital candidates append section, omit WAV text, and redact cookies everywhere", func(t *testing.T) {
 		item := &bcpb.Item{
 			AlbumId:    12345,
 			BandName:   fmt.Sprintf("Artist %s", secret1),
 			AlbumTitle: fmt.Sprintf("Album %s", secret2),
 		}
-		wavURL := fmt.Sprintf("https://p4.bcbits.com/download/album?sig=%s", secret1)
 		res := discogsCandidateResult{
 			Outcome: outcomeDigital,
 			Candidates: []discogsCandidate{
@@ -376,28 +375,36 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 			},
 		}
 
-		body := buildMissingMappingIssueBody(item, wavURL, 3, res, secret1, secret2)
+		body := buildMissingMappingIssueBody(item, res, secret1, secret2)
 		if strings.Contains(body, secret1) || strings.Contains(body, secret2) {
-			t.Fatalf("cookie secret leaked in WAV issue body:\n%s", body)
+			t.Fatalf("cookie secret leaked in issue body:\n%s", body)
 		}
 		if !strings.Contains(body, "[REDACTED]") {
-			t.Fatalf("expected [REDACTED] in WAV issue body:\n%s", body)
+			t.Fatalf("expected [REDACTED] in issue body:\n%s", body)
 		}
 		for _, want := range []string{
 			"Artist [REDACTED] - Album [REDACTED] (12345) is missing a mapping",
-			"Direct WAV download link: https://p4.bcbits.com/download/album?sig=[REDACTED]",
-			"Note: Bandcamp direct download links are time-limited and may expire over time.",
 			"### Candidate Discogs Digital Releases",
 			"- **Match [REDACTED]** (2024 — File, [REDACTED]) — https://www.discogs.com/release/555?c=[REDACTED]",
 			"bandcampserver_cli mapping -bandcamp 12345 -discogs 555",
 		} {
 			if !strings.Contains(body, want) {
-				t.Fatalf("missing %q in WAV issue body:\n%s", want, body)
+				t.Fatalf("missing %q in issue body:\n%s", want, body)
+			}
+		}
+		for _, forbidden := range []string{
+			"Direct WAV download link",
+			"time-limited",
+			"expire",
+			"WAV download link generation failed",
+		} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("issue body must not contain %q:\n%s", forbidden, body)
 			}
 		}
 	})
 
-	t.Run("linkless fallback path preserves base text, appends candidates, and redacts cookies everywhere", func(t *testing.T) {
+	t.Run("non-digital fallback candidates omit CLI command and WAV text and redact cookies", func(t *testing.T) {
 		item := &bcpb.Item{
 			AlbumId:    67890,
 			BandName:   fmt.Sprintf("Band %s", secret1),
@@ -416,22 +423,42 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 			},
 		}
 
-		body := buildMissingMappingIssueBody(item, "", 3, res, secret1, secret2)
+		body := buildMissingMappingIssueBody(item, res, secret1, secret2)
 		if strings.Contains(body, secret1) || strings.Contains(body, secret2) {
-			t.Fatalf("cookie secret leaked in linkless fallback body:\n%s", body)
+			t.Fatalf("cookie secret leaked in fallback body:\n%s", body)
 		}
 		for _, want := range []string{
 			"Band [REDACTED] - Clean Title (67890) is missing a mapping",
-			"Note: WAV download link generation failed after 3 attempts.",
 			"### Discogs Candidate Releases (Reference Only)",
 			"- **Ref [REDACTED]** (2022 — Vinyl) — https://www.discogs.com/release/777?t=[REDACTED]",
 		} {
 			if !strings.Contains(body, want) {
-				t.Fatalf("missing %q in linkless fallback body:\n%s", want, body)
+				t.Fatalf("missing %q in fallback body:\n%s", want, body)
 			}
 		}
-		if strings.Contains(body, "bandcampserver_cli mapping") {
-			t.Fatalf("linkless fallback with outcomeFallback must not emit mapping command:\n%s", body)
+		for _, forbidden := range []string{
+			"bandcampserver_cli mapping",
+			"Direct WAV download link",
+			"WAV download link generation failed",
+			"time-limited",
+			"expire",
+		} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("fallback body must not contain %q:\n%s", forbidden, body)
+			}
+		}
+	})
+
+	t.Run("empty candidate section emits base line only", func(t *testing.T) {
+		item := &bcpb.Item{
+			AlbumId:    42,
+			BandName:   "Solo Band",
+			AlbumTitle: "Solo Album",
+		}
+		body := buildMissingMappingIssueBody(item, discogsCandidateResult{})
+		want := "Solo Band - Solo Album (42) is missing a mapping"
+		if body != want {
+			t.Fatalf("got %q, want %q", body, want)
 		}
 	})
 }
