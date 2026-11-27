@@ -927,3 +927,428 @@ func TestLookupDiscogsCandidates_MetadataEdgeCases(t *testing.T) {
 		assertDiscogsLookupCounterDelta(t, before, outcomeNone)
 	})
 }
+
+func TestBandcampURLConstants(t *testing.T) {
+	if maxBandcampURLBytes != 2048 {
+		t.Fatalf("expected maxBandcampURLBytes=2048, got %d", maxBandcampURLBytes)
+	}
+	if bandcampLinkUnavailableText != "Bandcamp: Link unavailable" {
+		t.Fatalf("expected bandcampLinkUnavailableText=%q, got %q", "Bandcamp: Link unavailable", bandcampLinkUnavailableText)
+	}
+	if bandcampURLAvailable != "available" {
+		t.Fatalf("expected bandcampURLAvailable=%q, got %q", "available", bandcampURLAvailable)
+	}
+	if bandcampURLUnavailable != "unavailable" {
+		t.Fatalf("expected bandcampURLUnavailable=%q, got %q", "unavailable", bandcampURLUnavailable)
+	}
+	if bandcampURLInvalid != "invalid" {
+		t.Fatalf("expected bandcampURLInvalid=%q, got %q", "invalid", bandcampURLInvalid)
+	}
+}
+
+func TestSanitizeBandcampURL(t *testing.T) {
+	const albumPrefix = "https://artist.bandcamp.com/album/"
+	exact2048 := albumPrefix + strings.Repeat("a", maxBandcampURLBytes-len(albumPrefix))
+	over2049 := albumPrefix + strings.Repeat("a", maxBandcampURLBytes+1-len(albumPrefix))
+
+	const parenPrefix = "https://artist.bandcamp.com/album/("
+	parenExact2046 := parenPrefix + strings.Repeat("a", maxBandcampURLBytes-2-len(parenPrefix))
+	parenExpected2048 := albumPrefix + "%28" + strings.Repeat("a", maxBandcampURLBytes-2-len(parenPrefix))
+	parenOver2047 := parenPrefix + strings.Repeat("a", maxBandcampURLBytes-1-len(parenPrefix))
+
+	tests := []struct {
+		name        string
+		raw         string
+		wantURL     string
+		wantOutcome bandcampURLOutcome
+	}{
+		// Valid album & track URLs
+		{
+			name:        "valid bandcamp album URL",
+			raw:         "https://artist.bandcamp.com/album/some-album",
+			wantURL:     "https://artist.bandcamp.com/album/some-album",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "valid bandcamp track URL",
+			raw:         "https://artist.bandcamp.com/track/some-track",
+			wantURL:     "https://artist.bandcamp.com/track/some-track",
+			wantOutcome: bandcampURLAvailable,
+		},
+		// Valid custom artist domains & uppercase schemes
+		{
+			name:        "valid custom domain https album URL",
+			raw:         "https://music.example.com/album/foo",
+			wantURL:     "https://music.example.com/album/foo",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "valid custom domain http track URL",
+			raw:         "http://music.example.com/track/bar",
+			wantURL:     "http://music.example.com/track/bar",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "uppercase HTTPS scheme normalized",
+			raw:         "HTTPS://artist.bandcamp.com/album/upper",
+			wantURL:     "https://artist.bandcamp.com/album/upper",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "uppercase HTTP scheme normalized",
+			raw:         "HTTP://music.example.com/track/upper",
+			wantURL:     "http://music.example.com/track/upper",
+			wantOutcome: bandcampURLAvailable,
+		},
+		// Leading/trailing whitespace
+		{
+			name:        "leading and trailing whitespace trimmed",
+			raw:         " \t\nhttps://artist.bandcamp.com/album/trimmed \r\n",
+			wantURL:     "https://artist.bandcamp.com/album/trimmed",
+			wantOutcome: bandcampURLAvailable,
+		},
+		// Parentheses percent-encoding & boundaries
+		{
+			name:        "parentheses encoded for markdown autolink safety",
+			raw:         "https://artist.bandcamp.com/album/live-(deluxe)",
+			wantURL:     "https://artist.bandcamp.com/album/live-%28deluxe%29",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "2046-byte URL with single paren expands to exact 2048 bytes",
+			raw:         parenExact2046,
+			wantURL:     parenExpected2048,
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "2047-byte URL with single paren exceeds 2048 after encoding",
+			raw:         parenOver2047,
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Length boundaries
+		{
+			name:        "exact 2048-byte URL passes",
+			raw:         exact2048,
+			wantURL:     exact2048,
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "2049-byte URL rejected",
+			raw:         over2049,
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Empty or whitespace-only
+		{
+			name:        "empty string returns unavailable",
+			raw:         "",
+			wantURL:     "",
+			wantOutcome: bandcampURLUnavailable,
+		},
+		{
+			name:        "spaces only returns unavailable",
+			raw:         "   ",
+			wantURL:     "",
+			wantOutcome: bandcampURLUnavailable,
+		},
+		{
+			name:        "tabs and newlines only returns unavailable",
+			raw:         "\t\r\n",
+			wantURL:     "",
+			wantOutcome: bandcampURLUnavailable,
+		},
+		// Relative paths, missing host, non-HTTP(S) schemes
+		{
+			name:        "relative path starting with slash",
+			raw:         "/album/foo",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "relative path without slash",
+			raw:         "album/foo",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "scheme only missing host",
+			raw:         "https://",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "empty host with path",
+			raw:         "https:///album/foo",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "empty hostname with port",
+			raw:         "https://:443/album/foo",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "javascript scheme rejected",
+			raw:         "javascript:alert(1)",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "data scheme rejected",
+			raw:         "data:text/html,<h1>x</h1>",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "file scheme rejected",
+			raw:         "file:///etc/passwd",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "ftp scheme rejected",
+			raw:         "ftp://artist.bandcamp.com/album/foo",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Embedded userinfo
+		{
+			name:        "userinfo with user and password rejected",
+			raw:         "https://user:pass@artist.bandcamp.com/album/x",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "userinfo with username only rejected",
+			raw:         "https://user@artist.bandcamp.com/album/x",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "empty userinfo with at-sign rejected",
+			raw:         "https://@artist.bandcamp.com/album/x",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Embedded whitespace, control characters, and invalid UTF-8
+		{
+			name:        "embedded space rejected",
+			raw:         "https://artist.bandcamp.com/album/a b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded tab rejected",
+			raw:         "https://artist.bandcamp.com/album/a\tb",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded CR rejected",
+			raw:         "https://artist.bandcamp.com/album/a\rb",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded LF rejected",
+			raw:         "https://artist.bandcamp.com/album/a\nb",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded NUL control char rejected",
+			raw:         "https://artist.bandcamp.com/album/a\x00b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded 0x1f control char rejected",
+			raw:         "https://artist.bandcamp.com/album/a\x1fb",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded DEL 0x7f control char rejected",
+			raw:         "https://artist.bandcamp.com/album/a\x7fb",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "embedded NBSP unicode space rejected",
+			raw:         "https://artist.bandcamp.com/album/a\u00a0b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "invalid UTF-8 byte sequence rejected",
+			raw:         "https://artist.bandcamp.com/album/\xff",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Markdown-breaking characters
+		{
+			name:        "less-than character rejected",
+			raw:         "https://artist.bandcamp.com/album/a<b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "greater-than character rejected",
+			raw:         "https://artist.bandcamp.com/album/a>b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "backtick character rejected",
+			raw:         "https://artist.bandcamp.com/album/a`b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "left bracket character rejected",
+			raw:         "https://artist.bandcamp.com/album/a[b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "right bracket character rejected",
+			raw:         "https://artist.bandcamp.com/album/a]b",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "double quote character rejected",
+			raw:         `https://artist.bandcamp.com/album/a"b`,
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "backslash character rejected",
+			raw:         `https://artist.bandcamp.com/album/a\b`,
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Private download URLs
+		{
+			name:        "private download path with sig rejected",
+			raw:         "https://bandcamp.com/download?id=123&sig=abc",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "private download album path rejected",
+			raw:         "https://bandcamp.com/download/album?id=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "exact private download path rejected",
+			raw:         "https://bandcamp.com/download",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "mixed-case private download path rejected",
+			raw:         "https://bandcamp.com/Download/Album?id=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "percent-encoded private download path rejected",
+			raw:         "https://bandcamp.com/%64ownload?id=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "percent-encoded slash in download path rejected",
+			raw:         "https://bandcamp.com/download%2Falbum?id=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "dot-segment traversal to download path rejected",
+			raw:         "https://bandcamp.com/a/../download?id=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "sig query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?sig=abc",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "uppercase SIG query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?SIG=abc",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "sitem_id query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?sitem_id=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "uppercase SITEM_ID query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?SITEM_ID=123",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "payment_id query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?payment_id=456",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "mixed-case Payment_Id query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?Payment_Id=456",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "malformed percent escape alongside sig query param rejected",
+			raw:         "https://artist.bandcamp.com/album/foo?sig=%ZZ",
+			wantURL:     "",
+			wantOutcome: bandcampURLInvalid,
+		},
+		// Non-download slugs containing "download"
+		{
+			name:        "album titled download is allowed",
+			raw:         "https://artist.bandcamp.com/album/download",
+			wantURL:     "https://artist.bandcamp.com/album/download",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "track slug starting with download is allowed",
+			raw:         "https://artist.bandcamp.com/track/download-me",
+			wantURL:     "https://artist.bandcamp.com/track/download-me",
+			wantOutcome: bandcampURLAvailable,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotURL, gotOutcome := sanitizeBandcampURL(tc.raw)
+			if gotURL != tc.wantURL || gotOutcome != tc.wantOutcome {
+				t.Fatalf("sanitizeBandcampURL(%q) = (%q, %q), want (%q, %q)", tc.raw, gotURL, gotOutcome, tc.wantURL, tc.wantOutcome)
+			}
+		})
+	}
+
+	t.Run("2046-byte URL with paren verifies exact rendered byte length and encoding", func(t *testing.T) {
+		gotURL, gotOutcome := sanitizeBandcampURL(parenExact2046)
+		if gotOutcome != bandcampURLAvailable {
+			t.Fatalf("expected outcome %q, got %q", bandcampURLAvailable, gotOutcome)
+		}
+		if len(gotURL) != maxBandcampURLBytes {
+			t.Fatalf("expected rendered length %d, got %d", maxBandcampURLBytes, len(gotURL))
+		}
+		if !strings.Contains(gotURL, "%28") {
+			t.Fatalf("expected percent-encoded paren %%28 in %q", gotURL)
+		}
+	})
+}

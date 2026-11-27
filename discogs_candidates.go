@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	rcpb "github.com/brotherlogic/recordcollection/proto"
@@ -16,11 +19,21 @@ import (
 var discogsLookupTimeout = 10 * time.Second
 
 const (
-	discogsSearchPerPage  int32 = 10
-	maxDiscogsCandidates        = 3
-	maxSearchFieldRunes         = 500
-	maxRenderedFieldRunes       = 200
-	discogsReleaseBaseURL       = "https://www.discogs.com/release/"
+	discogsSearchPerPage        int32 = 10
+	maxDiscogsCandidates              = 3
+	maxSearchFieldRunes               = 500
+	maxRenderedFieldRunes             = 200
+	discogsReleaseBaseURL             = "https://www.discogs.com/release/"
+	maxBandcampURLBytes               = 2048
+	bandcampLinkUnavailableText       = "Bandcamp: Link unavailable"
+)
+
+type bandcampURLOutcome string
+
+const (
+	bandcampURLAvailable   bandcampURLOutcome = "available"
+	bandcampURLUnavailable bandcampURLOutcome = "unavailable"
+	bandcampURLInvalid     bandcampURLOutcome = "invalid"
 )
 
 type discogsLookupOutcome string
@@ -123,6 +136,86 @@ func sanitizeCandidateURL(raw string, releaseID int32) string {
 		return fmt.Sprintf("%s%d", discogsReleaseBaseURL, releaseID)
 	}
 	return ""
+}
+
+func isPrivateDownloadPath(p string) bool {
+	lp := strings.ToLower(p)
+	return lp == "/download" || strings.HasPrefix(lp, "/download/")
+}
+
+func isPrivateDownloadQueryKey(k string) bool {
+	switch strings.ToLower(k) {
+	case "sig", "sitem_id", "payment_id":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasPrivateDownloadQueryKey(u *url.URL) bool {
+	for k := range u.Query() {
+		if isPrivateDownloadQueryKey(k) {
+			return true
+		}
+	}
+	// Also scan RawQuery directly so malformed percent-escapes in another pair
+	// cannot cause url.Query() to skip or miss a forbidden signature parameter.
+	for _, part := range strings.FieldsFunc(u.RawQuery, func(r rune) bool { return r == '&' || r == ';' }) {
+		rawKey := part
+		if idx := strings.IndexByte(part, '='); idx >= 0 {
+			rawKey = part[:idx]
+		}
+		if isPrivateDownloadQueryKey(rawKey) {
+			return true
+		}
+		if unescaped, err := url.QueryUnescape(rawKey); err == nil && isPrivateDownloadQueryKey(unescaped) {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeBandcampURL validates and sanitizes a public Bandcamp release URL for
+// safe Markdown rendering in missing-mapping GitHub issues.
+func sanitizeBandcampURL(raw string) (string, bandcampURLOutcome) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", bandcampURLUnavailable
+	}
+	if len(trimmed) > maxBandcampURLBytes || !utf8.ValidString(trimmed) {
+		return "", bandcampURLInvalid
+	}
+
+	for _, r := range trimmed {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return "", bandcampURLInvalid
+		}
+		switch r {
+		case '<', '>', '`', '[', ']', '"', '\\':
+			return "", bandcampURLInvalid
+		}
+	}
+
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", bandcampURLInvalid
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Host == "" || u.Hostname() == "" || u.User != nil {
+		return "", bandcampURLInvalid
+	}
+
+	if isPrivateDownloadPath(u.Path) || isPrivateDownloadPath(u.EscapedPath()) ||
+		(u.Path != "" && isPrivateDownloadPath(path.Clean(u.Path))) || hasPrivateDownloadQueryKey(u) {
+		return "", bandcampURLInvalid
+	}
+
+	// Percent-encode parentheses so release slugs with parens do not break GitHub autolinks.
+	rendered := strings.NewReplacer("(", "%28", ")", "%29").Replace(u.String())
+	if len(rendered) > maxBandcampURLBytes {
+		return "", bandcampURLInvalid
+	}
+	return rendered, bandcampURLAvailable
 }
 
 // normalizeDiscogsCandidates filters invalid/duplicate results, sanitizes fields,
