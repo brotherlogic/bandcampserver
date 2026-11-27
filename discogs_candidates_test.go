@@ -384,6 +384,7 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 		}
 		for _, want := range []string{
 			"Artist [REDACTED] - Album [REDACTED] (12345) is missing a mapping",
+			bandcampLinkUnavailableText,
 			"### Candidate Discogs Digital Releases",
 			"- **Match [REDACTED]** (2024 — File, [REDACTED]) — https://www.discogs.com/release/555?c=[REDACTED]",
 			"bandcampserver_cli mapping -bandcamp 12345 -discogs 555",
@@ -391,6 +392,12 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 			if !strings.Contains(body, want) {
 				t.Fatalf("missing %q in issue body:\n%s", want, body)
 			}
+		}
+		summaryIdx := strings.Index(body, "Artist [REDACTED] - Album [REDACTED] (12345) is missing a mapping")
+		bcIdx := strings.Index(body, bandcampLinkUnavailableText)
+		discogsIdx := strings.Index(body, "### Candidate Discogs Digital Releases")
+		if !(summaryIdx >= 0 && bcIdx > summaryIdx && discogsIdx > bcIdx) {
+			t.Fatalf("expected summary -> Bandcamp link -> Discogs section ordering, got:\n%s", body)
 		}
 		for _, forbidden := range []string{
 			"Direct WAV download link",
@@ -429,12 +436,19 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 		}
 		for _, want := range []string{
 			"Band [REDACTED] - Clean Title (67890) is missing a mapping",
+			bandcampLinkUnavailableText,
 			"### Discogs Candidate Releases (Reference Only)",
 			"- **Ref [REDACTED]** (2022 — Vinyl) — https://www.discogs.com/release/777?t=[REDACTED]",
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("missing %q in fallback body:\n%s", want, body)
 			}
+		}
+		summaryIdx := strings.Index(body, "Band [REDACTED] - Clean Title (67890) is missing a mapping")
+		bcIdx := strings.Index(body, bandcampLinkUnavailableText)
+		discogsIdx := strings.Index(body, "### Discogs Candidate Releases (Reference Only)")
+		if !(summaryIdx >= 0 && bcIdx > summaryIdx && discogsIdx > bcIdx) {
+			t.Fatalf("expected summary -> Bandcamp link -> Discogs section ordering, got:\n%s", body)
 		}
 		for _, forbidden := range []string{
 			"bandcampserver_cli mapping",
@@ -449,16 +463,232 @@ func TestBuildMissingMappingIssueBody(t *testing.T) {
 		}
 	})
 
-	t.Run("empty candidate section emits base line only", func(t *testing.T) {
+	t.Run("empty candidate section emits base line and Bandcamp unavailable line", func(t *testing.T) {
 		item := &bcpb.Item{
 			AlbumId:    42,
 			BandName:   "Solo Band",
 			AlbumTitle: "Solo Album",
 		}
-		body := buildMissingMappingIssueBody(item, discogsCandidateResult{})
-		want := "Solo Band - Solo Album (42) is missing a mapping"
+		body, outcome := buildMissingMappingIssueBodyWithOutcome(item, discogsCandidateResult{})
+		want := "Solo Band - Solo Album (42) is missing a mapping\n\nBandcamp: Link unavailable"
 		if body != want {
 			t.Fatalf("got %q, want %q", body, want)
+		}
+		if outcome != bandcampURLUnavailable {
+			t.Fatalf("got outcome %q, want %q", outcome, bandcampURLUnavailable)
+		}
+		if got := buildMissingMappingIssueBody(item, discogsCandidateResult{}); got != body {
+			t.Fatalf("buildMissingMappingIssueBody mismatch: got %q, want %q", got, body)
+		}
+	})
+
+	t.Run("exact ordering across all 5 Discogs outcomes", func(t *testing.T) {
+		item := &bcpb.Item{
+			AlbumId:    1001,
+			BandName:   "Order Artist",
+			AlbumTitle: "Order Album",
+			ItemUrl:    "https://orderartist.bandcamp.com/album/order-album",
+		}
+		summaryLine := "Order Artist - Order Album (1001) is missing a mapping"
+		bandcampLine := "Bandcamp: https://orderartist.bandcamp.com/album/order-album"
+
+		outcomes := []struct {
+			name string
+			res  discogsCandidateResult
+		}{
+			{
+				name: "digital",
+				res: discogsCandidateResult{
+					Outcome: outcomeDigital,
+					Candidates: []discogsCandidate{
+						{ReleaseID: 101, Title: "Digital Match", Year: "2025", Formats: []string{"File", "FLAC"}, URL: "https://www.discogs.com/release/101"},
+					},
+				},
+			},
+			{
+				name: "fallback",
+				res: discogsCandidateResult{
+					Outcome: outcomeFallback,
+					Candidates: []discogsCandidate{
+						{ReleaseID: 202, Title: "Vinyl Match", Year: "2024", Formats: []string{"Vinyl"}, URL: "https://www.discogs.com/release/202"},
+					},
+				},
+			},
+			{
+				name: "none",
+				res:  discogsCandidateResult{Outcome: outcomeNone},
+			},
+			{
+				name: "error",
+				res:  discogsCandidateResult{Outcome: outcomeError},
+			},
+			{
+				name: "skipped",
+				res:  discogsCandidateResult{Outcome: outcomeSkipped},
+			},
+		}
+
+		for _, tc := range outcomes {
+			t.Run(tc.name, func(t *testing.T) {
+				wantSection := formatDiscogsCandidatesSection(item.GetAlbumId(), tc.res)
+				wantBody := summaryLine + "\n\n" + bandcampLine + "\n\n" + wantSection
+
+				gotBody, gotOutcome := buildMissingMappingIssueBodyWithOutcome(item, tc.res)
+				if gotOutcome != bandcampURLAvailable {
+					t.Fatalf("outcome = %q, want %q", gotOutcome, bandcampURLAvailable)
+				}
+				if gotBody != wantBody {
+					t.Fatalf("body mismatch for %s:\ngot:\n%s\nwant:\n%s", tc.name, gotBody, wantBody)
+				}
+				if delegated := buildMissingMappingIssueBody(item, tc.res); delegated != gotBody {
+					t.Fatalf("buildMissingMappingIssueBody mismatch for %s: got %q, want %q", tc.name, delegated, gotBody)
+				}
+			})
+		}
+	})
+
+	t.Run("valid Bandcamp URLs render sanitized Bandcamp line", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			itemURL string
+			wantURL string
+		}{
+			{
+				name:    "standard album URL",
+				itemURL: "https://artist.bandcamp.com/album/standard-album",
+				wantURL: "https://artist.bandcamp.com/album/standard-album",
+			},
+			{
+				name:    "single track URL",
+				itemURL: "https://artist.bandcamp.com/track/single-track",
+				wantURL: "https://artist.bandcamp.com/track/single-track",
+			},
+			{
+				name:    "custom artist domain URL",
+				itemURL: "https://music.customartist.org/album/custom-release",
+				wantURL: "https://music.customartist.org/album/custom-release",
+			},
+			{
+				name:    "URL containing parentheses",
+				itemURL: "https://artist.bandcamp.com/album/live-(deluxe-edition)",
+				wantURL: "https://artist.bandcamp.com/album/live-%28deluxe-edition%29",
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				item := &bcpb.Item{
+					AlbumId:    2002,
+					BandName:   "Valid Band",
+					AlbumTitle: "Valid Album",
+					ItemUrl:    tc.itemURL,
+				}
+				res := discogsCandidateResult{Outcome: outcomeNone}
+				body, outcome := buildMissingMappingIssueBodyWithOutcome(item, res)
+				if outcome != bandcampURLAvailable {
+					t.Fatalf("outcome = %q, want %q", outcome, bandcampURLAvailable)
+				}
+				want := "Valid Band - Valid Album (2002) is missing a mapping\n\nBandcamp: " + tc.wantURL + "\n\n" + formatDiscogsCandidatesSection(2002, res)
+				if body != want {
+					t.Fatalf("got:\n%s\nwant:\n%s", body, want)
+				}
+			})
+		}
+	})
+
+	t.Run("unavailable and invalid ItemUrl render fallback and never leak RedownloadUrl", func(t *testing.T) {
+		const redownloadURL = "https://bandcamp.com/download?id=9999&sig=top-secret-sig"
+
+		cases := []struct {
+			name        string
+			item        *bcpb.Item
+			wantSummary string
+			wantOutcome bandcampURLOutcome
+		}{
+			{
+				name:        "nil item",
+				item:        nil,
+				wantSummary: " -  (0) is missing a mapping",
+				wantOutcome: bandcampURLUnavailable,
+			},
+			{
+				name: "empty ItemUrl with populated RedownloadUrl",
+				item: &bcpb.Item{
+					AlbumId:       3001,
+					BandName:      "PreUpgrade Band",
+					AlbumTitle:    "PreUpgrade Album",
+					ItemUrl:       "",
+					RedownloadUrl: redownloadURL,
+				},
+				wantSummary: "PreUpgrade Band - PreUpgrade Album (3001) is missing a mapping",
+				wantOutcome: bandcampURLUnavailable,
+			},
+			{
+				name: "malformed unsafe ItemUrl with populated RedownloadUrl",
+				item: &bcpb.Item{
+					AlbumId:       3002,
+					BandName:      "Unsafe Band",
+					AlbumTitle:    "Unsafe Album",
+					ItemUrl:       "javascript:alert(1)",
+					RedownloadUrl: redownloadURL,
+				},
+				wantSummary: "Unsafe Band - Unsafe Album (3002) is missing a mapping",
+				wantOutcome: bandcampURLInvalid,
+			},
+			{
+				name: "private download ItemUrl with populated RedownloadUrl",
+				item: &bcpb.Item{
+					AlbumId:       3003,
+					BandName:      "Download Band",
+					AlbumTitle:    "Download Album",
+					ItemUrl:       "https://bandcamp.com/download/album?id=3003&sig=abc",
+					RedownloadUrl: redownloadURL,
+				},
+				wantSummary: "Download Band - Download Album (3003) is missing a mapping",
+				wantOutcome: bandcampURLInvalid,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				res := discogsCandidateResult{Outcome: outcomeNone}
+				body, outcome := buildMissingMappingIssueBodyWithOutcome(tc.item, res)
+				if outcome != tc.wantOutcome {
+					t.Fatalf("outcome = %q, want %q", outcome, tc.wantOutcome)
+				}
+				want := tc.wantSummary + "\n\n" + bandcampLinkUnavailableText + "\n\n" + formatDiscogsCandidatesSection(tc.item.GetAlbumId(), res)
+				if body != want {
+					t.Fatalf("got:\n%s\nwant:\n%s", body, want)
+				}
+				if strings.Contains(body, redownloadURL) || strings.Contains(body, "/download") || strings.Contains(body, "top-secret-sig") {
+					t.Fatalf("RedownloadUrl or private /download path leaked into issue body:\n%s", body)
+				}
+			})
+		}
+	})
+
+	t.Run("redactCookie redacts session cookie secrets appearing in ItemUrl", func(t *testing.T) {
+		item := &bcpb.Item{
+			AlbumId:    4001,
+			BandName:   fmt.Sprintf("Band %s", secret1),
+			AlbumTitle: "Clean Album",
+			ItemUrl:    fmt.Sprintf("https://artist.bandcamp.com/album/release-%s?ref=%s", secret1, secret2),
+		}
+		res := discogsCandidateResult{Outcome: outcomeError}
+
+		body, outcome := buildMissingMappingIssueBodyWithOutcome(item, res, secret1, secret2)
+		if outcome != bandcampURLAvailable {
+			t.Fatalf("outcome = %q, want %q", outcome, bandcampURLAvailable)
+		}
+		if strings.Contains(body, secret1) || strings.Contains(body, secret2) {
+			t.Fatalf("cookie secret leaked in issue body:\n%s", body)
+		}
+		want := "Band [REDACTED] - Clean Album (4001) is missing a mapping\n\nBandcamp: https://artist.bandcamp.com/album/release-[REDACTED]?ref=[REDACTED]\n\nNote: Discogs candidate lookup failed; please search Discogs manually."
+		if body != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", body, want)
+		}
+		if delegated := buildMissingMappingIssueBody(item, res, secret1, secret2); delegated != body {
+			t.Fatalf("buildMissingMappingIssueBody mismatch: got %q, want %q", delegated, body)
 		}
 	})
 }
@@ -1351,4 +1581,115 @@ func TestSanitizeBandcampURL(t *testing.T) {
 			t.Fatalf("expected percent-encoded paren %%28 in %q", gotURL)
 		}
 	})
+}
+
+func TestFormatBandcampLinkLine(t *testing.T) {
+	tests := []struct {
+		name        string
+		item        *bcpb.Item
+		wantLine    string
+		wantOutcome bandcampURLOutcome
+	}{
+		{
+			name:        "nil item returns unavailable",
+			item:        nil,
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLUnavailable,
+		},
+		{
+			name:        "empty ItemUrl returns unavailable",
+			item:        &bcpb.Item{AlbumId: 1, ItemUrl: ""},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLUnavailable,
+		},
+		{
+			name:        "whitespace-only ItemUrl returns unavailable",
+			item:        &bcpb.Item{AlbumId: 2, ItemUrl: "  \t\r\n  "},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLUnavailable,
+		},
+		{
+			name:        "valid standard Bandcamp album URL",
+			item:        &bcpb.Item{AlbumId: 3, ItemUrl: "https://artist.bandcamp.com/album/my-album"},
+			wantLine:    "Bandcamp: https://artist.bandcamp.com/album/my-album",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "valid single-track URL",
+			item:        &bcpb.Item{AlbumId: 4, ItemUrl: "https://artist.bandcamp.com/track/my-track"},
+			wantLine:    "Bandcamp: https://artist.bandcamp.com/track/my-track",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "valid custom artist domain URL",
+			item:        &bcpb.Item{AlbumId: 5, ItemUrl: "https://music.example.com/album/custom"},
+			wantLine:    "Bandcamp: https://music.example.com/album/custom",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "valid URL with parentheses percent-encoded",
+			item:        &bcpb.Item{AlbumId: 6, ItemUrl: "https://artist.bandcamp.com/album/my-album-(deluxe)"},
+			wantLine:    "Bandcamp: https://artist.bandcamp.com/album/my-album-%28deluxe%29",
+			wantOutcome: bandcampURLAvailable,
+		},
+		{
+			name:        "javascript scheme ItemUrl rejected as invalid",
+			item:        &bcpb.Item{AlbumId: 7, ItemUrl: "javascript:alert(1)"},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "relative path ItemUrl rejected as invalid",
+			item:        &bcpb.Item{AlbumId: 8, ItemUrl: "/album/relative"},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "markdown-breaking chars in ItemUrl rejected as invalid",
+			item:        &bcpb.Item{AlbumId: 9, ItemUrl: "https://artist.bandcamp.com/album/[bad]"},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "control char in ItemUrl rejected as invalid",
+			item:        &bcpb.Item{AlbumId: 10, ItemUrl: "https://artist.bandcamp.com/album/a\nb"},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name:        "private download ItemUrl rejected as invalid",
+			item:        &bcpb.Item{AlbumId: 11, ItemUrl: "https://bandcamp.com/download?id=123&sig=abc"},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLInvalid,
+		},
+		{
+			name: "populated RedownloadUrl with empty ItemUrl never uses RedownloadUrl",
+			item: &bcpb.Item{
+				AlbumId:       12,
+				ItemUrl:       "",
+				RedownloadUrl: "https://bandcamp.com/download?id=99&sig=secret",
+			},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLUnavailable,
+		},
+		{
+			name: "populated RedownloadUrl with invalid ItemUrl never uses RedownloadUrl",
+			item: &bcpb.Item{
+				AlbumId:       13,
+				ItemUrl:       "javascript:alert(1)",
+				RedownloadUrl: "https://bandcamp.com/download?id=99&sig=secret",
+			},
+			wantLine:    bandcampLinkUnavailableText,
+			wantOutcome: bandcampURLInvalid,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotLine, gotOutcome := formatBandcampLinkLine(tc.item)
+			if gotLine != tc.wantLine || gotOutcome != tc.wantOutcome {
+				t.Fatalf("formatBandcampLinkLine() = (%q, %q), want (%q, %q)", gotLine, gotOutcome, tc.wantLine, tc.wantOutcome)
+			}
+		})
+	}
 }

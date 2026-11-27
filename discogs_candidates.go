@@ -403,7 +403,18 @@ func formatDiscogsCandidatesSection(albumID int64, res discogsCandidateResult) s
 	}
 }
 
-func buildMissingMappingIssueBody(item *bcpb.Item, res discogsCandidateResult, cookies ...string) string {
+func formatBandcampLinkLine(item *bcpb.Item) (string, bandcampURLOutcome) {
+	if item == nil {
+		return bandcampLinkUnavailableText, bandcampURLUnavailable
+	}
+	urlStr, outcome := sanitizeBandcampURL(item.GetItemUrl())
+	if outcome == bandcampURLAvailable {
+		return "Bandcamp: " + urlStr, outcome
+	}
+	return bandcampLinkUnavailableText, outcome
+}
+
+func buildMissingMappingIssueBodyWithOutcome(item *bcpb.Item, res discogsCandidateResult, cookies ...string) (string, bandcampURLOutcome) {
 	body := fmt.Sprintf(
 		"%v - %v (%v) is missing a mapping",
 		item.GetBandName(),
@@ -411,8 +422,16 @@ func buildMissingMappingIssueBody(item *bcpb.Item, res discogsCandidateResult, c
 		item.GetAlbumId(),
 	)
 
+	bandcampLine, outcome := formatBandcampLinkLine(item)
+	body += "\n\n" + bandcampLine
+
 	if section := formatDiscogsCandidatesSection(item.GetAlbumId(), res); section != "" {
 		body += "\n\n" + section
 	}
-	return redactCookie(body, cookies...)
+	return redactCookie(body, cookies...), outcome
+}
+
+func buildMissingMappingIssueBody(item *bcpb.Item, res discogsCandidateResult, cookies ...string) string {
+	body, _ := buildMissingMappingIssueBodyWithOutcome(item, res, cookies...)
+	return body
 }
