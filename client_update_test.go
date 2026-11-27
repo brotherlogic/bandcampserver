@@ -191,7 +191,7 @@ func TestClientUpdate_MissingMappingIssueCreation_NoWAVLinkResolution(t *testing
 			if len(calls) != 1 {
 				t.Fatalf("expected 1 ImmediateIssue call, got %d (%+v)", len(calls), calls)
 			}
-			wantTitle := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", tc.item.GetBandName(), tc.item.GetAlbumId())
+			wantTitle := fmt.Sprintf("Missing Discogs mapping for %v - %v [%v]", tc.item.GetBandName(), tc.item.GetAlbumTitle(), tc.item.GetAlbumId())
 			if calls[0].title != wantTitle {
 				t.Errorf("issue title = %q, want %q", calls[0].title, wantTitle)
 			}
@@ -600,7 +600,7 @@ func TestClientUpdate_MissingMappingWorksWithoutBandcampCookie(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 missing-mapping issue, got %d (%+v)", len(calls), calls)
 	}
-	if calls[0].title != "Bandcamp entry for No Cookie Artist is missing mapping [501]" {
+	if calls[0].title != "Missing Discogs mapping for No Cookie Artist - No Cookie Album [501]" {
 		t.Errorf("unexpected issue title: %q", calls[0].title)
 	}
 	saved := store.currentConfig(t)
@@ -1006,7 +1006,7 @@ func TestClientUpdate_DiscogsCandidates_Digital(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 ImmediateIssue call, got %d", len(calls))
 	}
-	wantTitle := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), item.GetAlbumId())
+	wantTitle := fmt.Sprintf("Missing Discogs mapping for %v - %v [%v]", item.GetBandName(), item.GetAlbumTitle(), item.GetAlbumId())
 	if calls[0].title != wantTitle {
 		t.Errorf("issue title = %q, want %q", calls[0].title, wantTitle)
 	}

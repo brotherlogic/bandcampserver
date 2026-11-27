@@ -167,7 +167,7 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v - %v (%v)", albumID, item.GetBandName(), item.GetAlbumTitle(), today))
 
 			cookie := config.GetIdentityCookie()
-			title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
+			title := fmt.Sprintf("Missing Discogs mapping for %v - %v [%v]", item.GetBandName(), item.GetAlbumTitle(), albumID)
 			candidates := s.lookupDiscogsCandidates(ctx, rc, item, cookie)
 			body, bcURLOutcome := buildMissingMappingIssueBodyWithOutcome(item, candidates, cookie)
 			issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
