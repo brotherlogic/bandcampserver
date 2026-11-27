@@ -70,7 +70,14 @@ func (f *clientUpdateFakeRCClient) AddRecord(ctx context.Context, req *rcpb.AddR
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.addCalls++
-	return &rcpb.AddRecordResponse{}, nil
+	return &rcpb.AddRecordResponse{
+		Added: &rcpb.Record{
+			Release: &rcgd.Release{
+				Id:         req.GetToAdd().GetRelease().GetId(),
+				InstanceId: int64(1000 + f.addCalls),
+			},
+		},
+	}, nil
 }
 
 func (f *clientUpdateFakeRCClient) SearchReleases(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error) {
@@ -2654,5 +2661,159 @@ func TestClientUpdate_MissingMappingIssueThrottling(t *testing.T) {
 	}
 	if cfg6.GetIssueIds()[4102] != 0 || cfg6.GetIssueIds()[4103] != 0 {
 		t.Errorf("tick 6: expected IssueIds[4102]==0 and [4103]==0, got %v", cfg6.GetIssueIds())
+	}
+}
+
+func TestClientUpdate_Phase1_InvalidAddRecordInstanceID(t *testing.T) {
+	fixedNow := time.Unix(1700310000, 0)
+
+	tests := []struct {
+		name          string
+		addResp       *rcpb.AddRecordResponse
+		checkRecovery bool
+	}{
+		{
+			name:    "nil Added response",
+			addResp: &rcpb.AddRecordResponse{},
+		},
+		{
+			name: "zero instance_id",
+			addResp: &rcpb.AddRecordResponse{
+				Added: &rcpb.Record{
+					Release: &rcgd.Release{
+						Id:         31692413,
+						InstanceId: 0,
+					},
+				},
+			},
+			checkRecovery: true,
+		},
+		{
+			name: "negative instance_id",
+			addResp: &rcpb.AddRecordResponse{
+				Added: &rcpb.Record{
+					Release: &rcgd.Release{
+						Id:         31692413,
+						InstanceId: -5,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newAPITestConfigStore(t, &pb.Config{
+				IdentityCookie: "valid-cookie",
+				LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+				Items: []*bcpb.Item{
+					{
+						AlbumId:    2796019519,
+						BandName:   "Test Band",
+						AlbumTitle: "Test Album",
+					},
+				},
+				Mapping:          map[int64]int32{2796019519: 31692413},
+				AddedDate:        map[int32]int64{},
+				LastValidateDate: map[int64]int64{2796019519: fixedNow.Unix()},
+				PendingDownloads: map[int64]*pb.DownloadJob{
+					2796019519: {
+						DiscogsId: 31692413,
+						State:     pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+					},
+				},
+			})
+
+			returnValid := false
+			rc := &downloadsTestRCClient{
+				getFn: func(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+					return &rcpb.GetRecordResponse{
+						Record: &rcpb.Record{
+							Release: &rcgd.Release{
+								Id:       1,
+								FolderId: digitalGoalFolder,
+								Formats:  []*rcgd.Format{{Name: "File"}},
+							},
+							Metadata: &rcpb.ReleaseMetadata{
+								GoalFolder: digitalGoalFolder,
+							},
+						},
+					}, nil
+				},
+				queryFn: func(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error) {
+					return &rcpb.QueryRecordsResponse{}, nil
+				},
+				addFn: func(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error) {
+					if returnValid {
+						return &rcpb.AddRecordResponse{
+							Added: &rcpb.Record{
+								Release: &rcgd.Release{
+									Id:         31692413,
+									InstanceId: 99001,
+								},
+							},
+						}, nil
+					}
+					return tc.addResp, nil
+				},
+			}
+			cd := &downloadsTestCDClient{}
+
+			s := &Server{
+				store:    store,
+				issues:   &apiTestIssueManager{},
+				rc:       rc,
+				cdClient: cd,
+				now:      func() time.Time { return fixedNow },
+				logFunc:  (&apiTestLogger{}).log,
+			}
+
+			ctx := context.Background()
+			_, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1})
+			if err == nil {
+				t.Fatalf("expected error when AddRecord returns invalid instance_id, got nil")
+			}
+			if !strings.Contains(err.Error(), "invalid instance_id") || !strings.Contains(err.Error(), "31692413") {
+				t.Errorf("unexpected error message: %v", err)
+			}
+			if len(rc.addCalls) != 1 {
+				t.Errorf("expected 1 AddRecord call, got %d", len(rc.addCalls))
+			}
+
+			saved := store.currentConfig(t)
+			if saved.GetAddedDate()[31692413] != 0 {
+				t.Errorf("AddedDate[31692413] = %d, want 0", saved.GetAddedDate()[31692413])
+			}
+			job := saved.GetPendingDownloads()[2796019519]
+			if job == nil {
+				t.Fatalf("expected PendingDownloads[2796019519] to remain present")
+			}
+			if job.GetInstanceId() != 0 {
+				t.Errorf("PendingDownloads[2796019519].InstanceId = %d, want 0", job.GetInstanceId())
+			}
+			if job.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING {
+				t.Errorf("PendingDownloads[2796019519].State = %v, want PENDING", job.GetState())
+			}
+			if job.GetAttempts() != 0 {
+				t.Errorf("PendingDownloads[2796019519].Attempts = %d, want 0", job.GetAttempts())
+			}
+			if len(cd.downloadCalls) != 0 {
+				t.Errorf("expected 0 cdprocessor DownloadRelease calls, got %d", len(cd.downloadCalls))
+			}
+
+			if tc.checkRecovery {
+				returnValid = true
+				if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+					t.Fatalf("subsequent ClientUpdate recovery failed: %v", err)
+				}
+				recovered := store.currentConfig(t)
+				if recovered.GetAddedDate()[31692413] != fixedNow.Unix() {
+					t.Errorf("recovered AddedDate[31692413] = %d, want %d", recovered.GetAddedDate()[31692413], fixedNow.Unix())
+				}
+				if gotJob := recovered.GetPendingDownloads()[2796019519]; gotJob == nil || gotJob.GetInstanceId() != 99001 {
+					t.Errorf("expected recovered PendingDownloads[2796019519].InstanceId == 99001, got %+v", gotJob)
+				}
+			}
+		})
 	}
 }
