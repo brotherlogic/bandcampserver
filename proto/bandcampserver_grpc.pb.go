@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BandcampServerService_SetToken_FullMethodName   = "/bandcampserver.BandcampServerService/SetToken"
-	BandcampServerService_SetCookie_FullMethodName  = "/bandcampserver.BandcampServerService/SetCookie"
-	BandcampServerService_AddMapping_FullMethodName = "/bandcampserver.BandcampServerService/AddMapping"
-	BandcampServerService_Reset_FullMethodName      = "/bandcampserver.BandcampServerService/Reset"
-	BandcampServerService_Lookup_FullMethodName     = "/bandcampserver.BandcampServerService/Lookup"
+	BandcampServerService_SetToken_FullMethodName        = "/bandcampserver.BandcampServerService/SetToken"
+	BandcampServerService_SetCookie_FullMethodName       = "/bandcampserver.BandcampServerService/SetCookie"
+	BandcampServerService_AddMapping_FullMethodName      = "/bandcampserver.BandcampServerService/AddMapping"
+	BandcampServerService_Reset_FullMethodName           = "/bandcampserver.BandcampServerService/Reset"
+	BandcampServerService_Lookup_FullMethodName          = "/bandcampserver.BandcampServerService/Lookup"
+	BandcampServerService_TriggerDownload_FullMethodName = "/bandcampserver.BandcampServerService/TriggerDownload"
 )
 
 // BandcampServerServiceClient is the client API for BandcampServerService service.
@@ -35,6 +36,7 @@ type BandcampServerServiceClient interface {
 	AddMapping(ctx context.Context, in *AddMappingRequest, opts ...grpc.CallOption) (*AddMappingResponse, error)
 	Reset(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*ResetResponse, error)
 	Lookup(ctx context.Context, in *LookupRequest, opts ...grpc.CallOption) (*LookupResponse, error)
+	TriggerDownload(ctx context.Context, in *TriggerDownloadRequest, opts ...grpc.CallOption) (*TriggerDownloadResponse, error)
 }
 
 type bandcampServerServiceClient struct {
@@ -95,6 +97,16 @@ func (c *bandcampServerServiceClient) Lookup(ctx context.Context, in *LookupRequ
 	return out, nil
 }
 
+func (c *bandcampServerServiceClient) TriggerDownload(ctx context.Context, in *TriggerDownloadRequest, opts ...grpc.CallOption) (*TriggerDownloadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TriggerDownloadResponse)
+	err := c.cc.Invoke(ctx, BandcampServerService_TriggerDownload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BandcampServerServiceServer is the server API for BandcampServerService service.
 // All implementations should embed UnimplementedBandcampServerServiceServer
 // for forward compatibility.
@@ -104,6 +116,7 @@ type BandcampServerServiceServer interface {
 	AddMapping(context.Context, *AddMappingRequest) (*AddMappingResponse, error)
 	Reset(context.Context, *ResetRequest) (*ResetResponse, error)
 	Lookup(context.Context, *LookupRequest) (*LookupResponse, error)
+	TriggerDownload(context.Context, *TriggerDownloadRequest) (*TriggerDownloadResponse, error)
 }
 
 // UnimplementedBandcampServerServiceServer should be embedded to have
@@ -127,6 +140,9 @@ func (UnimplementedBandcampServerServiceServer) Reset(context.Context, *ResetReq
 }
 func (UnimplementedBandcampServerServiceServer) Lookup(context.Context, *LookupRequest) (*LookupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Lookup not implemented")
+}
+func (UnimplementedBandcampServerServiceServer) TriggerDownload(context.Context, *TriggerDownloadRequest) (*TriggerDownloadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TriggerDownload not implemented")
 }
 func (UnimplementedBandcampServerServiceServer) testEmbeddedByValue() {}
 
@@ -238,6 +254,24 @@ func _BandcampServerService_Lookup_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BandcampServerService_TriggerDownload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TriggerDownloadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BandcampServerServiceServer).TriggerDownload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BandcampServerService_TriggerDownload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BandcampServerServiceServer).TriggerDownload(ctx, req.(*TriggerDownloadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BandcampServerService_ServiceDesc is the grpc.ServiceDesc for BandcampServerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -264,6 +298,10 @@ var BandcampServerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Lookup",
 			Handler:    _BandcampServerService_Lookup_Handler,
+		},
+		{
+			MethodName: "TriggerDownload",
+			Handler:    _BandcampServerService_TriggerDownload_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

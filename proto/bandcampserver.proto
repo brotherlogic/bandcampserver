@@ -6,6 +6,23 @@ option go_package = "github.com/brotherlogic/bandcampserver/proto";
 
 import "github.com/brotherlogic/bandcamplib/proto/bandcamp.proto";
 
+enum DownloadJobState {
+  DOWNLOAD_JOB_STATE_UNSPECIFIED = 0;
+  DOWNLOAD_JOB_STATE_PENDING = 1;
+  DOWNLOAD_JOB_STATE_SUBMITTED = 2;
+  DOWNLOAD_JOB_STATE_FAILED = 3;
+}
+
+message DownloadJob {
+  int32 discogs_id = 1;
+  int64 instance_id = 2;
+  DownloadJobState state = 3;
+  int32 attempts = 4;
+  int64 last_attempt = 5;
+  int32 alert_issue_id = 6;
+  string last_error = 7;
+}
+
 message Config {
   string token = 1;
   int64 last_token_refresh = 2;
@@ -20,10 +37,12 @@ message Config {
   string identity_cookie = 9;
   // Unix timestamp of last manual set or automatic refresh of identity_cookie
   int64 last_cookie_refresh = 10;
-  // Per-album_id count of consecutive non-auth WAV download-link generation failures
-  map<int64, int32> download_link_failures = 11;
+  // Deprecated: pre-mapping WAV link resolution was removed; kept for wire compatibility.
+  map<int64, int32> download_link_failures = 11 [deprecated = true];
   // Active GitHub issue number for missing/expired Bandcamp auth alert (0 = none)
   int32 auth_alert_issue_id = 12;
+  // Post-mapping Bandcamp WAV download jobs keyed by Bandcamp album_id.
+  map<int64, DownloadJob> pending_downloads = 13;
 }
 
 message SetCookieRequest {
@@ -56,10 +75,24 @@ message LookupResponse {
   bandcamplib.Item bandcamp = 1;
 }
 
+message TriggerDownloadRequest {
+  int64 bandcamp_id = 1;
+  int32 discogs_id = 2;
+}
+
+message TriggerDownloadResponse {
+  int64 bandcamp_id = 1;
+  int32 discogs_id = 2;
+  DownloadJobState state = 3;
+  bool already_active = 4;
+  string message = 5;
+}
+
 service BandcampServerService {
   rpc SetToken(SetTokenRequest) returns (SetTokenResponse) {};
   rpc SetCookie(SetCookieRequest) returns (SetCookieResponse) {};
   rpc AddMapping(AddMappingRequest) returns (AddMappingResponse) {};
   rpc Reset(ResetRequest) returns (ResetResponse) {};
   rpc Lookup(LookupRequest) returns (LookupResponse) {};
+  rpc TriggerDownload(TriggerDownloadRequest) returns (TriggerDownloadResponse) {};
 }

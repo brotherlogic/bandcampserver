@@ -22,6 +22,150 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type DownloadJobState int32
+
+const (
+	DownloadJobState_DOWNLOAD_JOB_STATE_UNSPECIFIED DownloadJobState = 0
+	DownloadJobState_DOWNLOAD_JOB_STATE_PENDING     DownloadJobState = 1
+	DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED   DownloadJobState = 2
+	DownloadJobState_DOWNLOAD_JOB_STATE_FAILED      DownloadJobState = 3
+)
+
+// Enum value maps for DownloadJobState.
+var (
+	DownloadJobState_name = map[int32]string{
+		0: "DOWNLOAD_JOB_STATE_UNSPECIFIED",
+		1: "DOWNLOAD_JOB_STATE_PENDING",
+		2: "DOWNLOAD_JOB_STATE_SUBMITTED",
+		3: "DOWNLOAD_JOB_STATE_FAILED",
+	}
+	DownloadJobState_value = map[string]int32{
+		"DOWNLOAD_JOB_STATE_UNSPECIFIED": 0,
+		"DOWNLOAD_JOB_STATE_PENDING":     1,
+		"DOWNLOAD_JOB_STATE_SUBMITTED":   2,
+		"DOWNLOAD_JOB_STATE_FAILED":      3,
+	}
+)
+
+func (x DownloadJobState) Enum() *DownloadJobState {
+	p := new(DownloadJobState)
+	*p = x
+	return p
+}
+
+func (x DownloadJobState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DownloadJobState) Descriptor() protoreflect.EnumDescriptor {
+	return file_bandcampserver_proto_enumTypes[0].Descriptor()
+}
+
+func (DownloadJobState) Type() protoreflect.EnumType {
+	return &file_bandcampserver_proto_enumTypes[0]
+}
+
+func (x DownloadJobState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DownloadJobState.Descriptor instead.
+func (DownloadJobState) EnumDescriptor() ([]byte, []int) {
+	return file_bandcampserver_proto_rawDescGZIP(), []int{0}
+}
+
+type DownloadJob struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DiscogsId     int32                  `protobuf:"varint,1,opt,name=discogs_id,json=discogsId,proto3" json:"discogs_id,omitempty"`
+	InstanceId    int64                  `protobuf:"varint,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	State         DownloadJobState       `protobuf:"varint,3,opt,name=state,proto3,enum=bandcampserver.DownloadJobState" json:"state,omitempty"`
+	Attempts      int32                  `protobuf:"varint,4,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	LastAttempt   int64                  `protobuf:"varint,5,opt,name=last_attempt,json=lastAttempt,proto3" json:"last_attempt,omitempty"`
+	AlertIssueId  int32                  `protobuf:"varint,6,opt,name=alert_issue_id,json=alertIssueId,proto3" json:"alert_issue_id,omitempty"`
+	LastError     string                 `protobuf:"bytes,7,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadJob) Reset() {
+	*x = DownloadJob{}
+	mi := &file_bandcampserver_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadJob) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadJob) ProtoMessage() {}
+
+func (x *DownloadJob) ProtoReflect() protoreflect.Message {
+	mi := &file_bandcampserver_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadJob.ProtoReflect.Descriptor instead.
+func (*DownloadJob) Descriptor() ([]byte, []int) {
+	return file_bandcampserver_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *DownloadJob) GetDiscogsId() int32 {
+	if x != nil {
+		return x.DiscogsId
+	}
+	return 0
+}
+
+func (x *DownloadJob) GetInstanceId() int64 {
+	if x != nil {
+		return x.InstanceId
+	}
+	return 0
+}
+
+func (x *DownloadJob) GetState() DownloadJobState {
+	if x != nil {
+		return x.State
+	}
+	return DownloadJobState_DOWNLOAD_JOB_STATE_UNSPECIFIED
+}
+
+func (x *DownloadJob) GetAttempts() int32 {
+	if x != nil {
+		return x.Attempts
+	}
+	return 0
+}
+
+func (x *DownloadJob) GetLastAttempt() int64 {
+	if x != nil {
+		return x.LastAttempt
+	}
+	return 0
+}
+
+func (x *DownloadJob) GetAlertIssueId() int32 {
+	if x != nil {
+		return x.AlertIssueId
+	}
+	return 0
+}
+
+func (x *DownloadJob) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
 type Config struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Token            string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
@@ -36,17 +180,21 @@ type Config struct {
 	IdentityCookie string `protobuf:"bytes,9,opt,name=identity_cookie,json=identityCookie,proto3" json:"identity_cookie,omitempty"`
 	// Unix timestamp of last manual set or automatic refresh of identity_cookie
 	LastCookieRefresh int64 `protobuf:"varint,10,opt,name=last_cookie_refresh,json=lastCookieRefresh,proto3" json:"last_cookie_refresh,omitempty"`
-	// Per-album_id count of consecutive non-auth WAV download-link generation failures
+	// Deprecated: pre-mapping WAV link resolution was removed; kept for wire compatibility.
+	//
+	// Deprecated: Marked as deprecated in bandcampserver.proto.
 	DownloadLinkFailures map[int64]int32 `protobuf:"bytes,11,rep,name=download_link_failures,json=downloadLinkFailures,proto3" json:"download_link_failures,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	// Active GitHub issue number for missing/expired Bandcamp auth alert (0 = none)
 	AuthAlertIssueId int32 `protobuf:"varint,12,opt,name=auth_alert_issue_id,json=authAlertIssueId,proto3" json:"auth_alert_issue_id,omitempty"`
+	// Post-mapping Bandcamp WAV download jobs keyed by Bandcamp album_id.
+	PendingDownloads map[int64]*DownloadJob `protobuf:"bytes,13,rep,name=pending_downloads,json=pendingDownloads,proto3" json:"pending_downloads,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Config) Reset() {
 	*x = Config{}
-	mi := &file_bandcampserver_proto_msgTypes[0]
+	mi := &file_bandcampserver_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -58,7 +206,7 @@ func (x *Config) String() string {
 func (*Config) ProtoMessage() {}
 
 func (x *Config) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[0]
+	mi := &file_bandcampserver_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -71,7 +219,7 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{0}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Config) GetToken() string {
@@ -144,6 +292,7 @@ func (x *Config) GetLastCookieRefresh() int64 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in bandcampserver.proto.
 func (x *Config) GetDownloadLinkFailures() map[int64]int32 {
 	if x != nil {
 		return x.DownloadLinkFailures
@@ -158,6 +307,13 @@ func (x *Config) GetAuthAlertIssueId() int32 {
 	return 0
 }
 
+func (x *Config) GetPendingDownloads() map[int64]*DownloadJob {
+	if x != nil {
+		return x.PendingDownloads
+	}
+	return nil
+}
+
 type SetCookieRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Cookie        string                 `protobuf:"bytes,1,opt,name=cookie,proto3" json:"cookie,omitempty"`
@@ -167,7 +323,7 @@ type SetCookieRequest struct {
 
 func (x *SetCookieRequest) Reset() {
 	*x = SetCookieRequest{}
-	mi := &file_bandcampserver_proto_msgTypes[1]
+	mi := &file_bandcampserver_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -179,7 +335,7 @@ func (x *SetCookieRequest) String() string {
 func (*SetCookieRequest) ProtoMessage() {}
 
 func (x *SetCookieRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[1]
+	mi := &file_bandcampserver_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -192,7 +348,7 @@ func (x *SetCookieRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCookieRequest.ProtoReflect.Descriptor instead.
 func (*SetCookieRequest) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{1}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SetCookieRequest) GetCookie() string {
@@ -210,7 +366,7 @@ type SetCookieResponse struct {
 
 func (x *SetCookieResponse) Reset() {
 	*x = SetCookieResponse{}
-	mi := &file_bandcampserver_proto_msgTypes[2]
+	mi := &file_bandcampserver_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -222,7 +378,7 @@ func (x *SetCookieResponse) String() string {
 func (*SetCookieResponse) ProtoMessage() {}
 
 func (x *SetCookieResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[2]
+	mi := &file_bandcampserver_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -235,7 +391,7 @@ func (x *SetCookieResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCookieResponse.ProtoReflect.Descriptor instead.
 func (*SetCookieResponse) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{2}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{3}
 }
 
 type SetTokenRequest struct {
@@ -247,7 +403,7 @@ type SetTokenRequest struct {
 
 func (x *SetTokenRequest) Reset() {
 	*x = SetTokenRequest{}
-	mi := &file_bandcampserver_proto_msgTypes[3]
+	mi := &file_bandcampserver_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -259,7 +415,7 @@ func (x *SetTokenRequest) String() string {
 func (*SetTokenRequest) ProtoMessage() {}
 
 func (x *SetTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[3]
+	mi := &file_bandcampserver_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -272,7 +428,7 @@ func (x *SetTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetTokenRequest.ProtoReflect.Descriptor instead.
 func (*SetTokenRequest) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{3}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SetTokenRequest) GetToken() string {
@@ -290,7 +446,7 @@ type SetTokenResponse struct {
 
 func (x *SetTokenResponse) Reset() {
 	*x = SetTokenResponse{}
-	mi := &file_bandcampserver_proto_msgTypes[4]
+	mi := &file_bandcampserver_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -302,7 +458,7 @@ func (x *SetTokenResponse) String() string {
 func (*SetTokenResponse) ProtoMessage() {}
 
 func (x *SetTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[4]
+	mi := &file_bandcampserver_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -315,7 +471,7 @@ func (x *SetTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetTokenResponse.ProtoReflect.Descriptor instead.
 func (*SetTokenResponse) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{4}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{5}
 }
 
 type AddMappingRequest struct {
@@ -328,7 +484,7 @@ type AddMappingRequest struct {
 
 func (x *AddMappingRequest) Reset() {
 	*x = AddMappingRequest{}
-	mi := &file_bandcampserver_proto_msgTypes[5]
+	mi := &file_bandcampserver_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -340,7 +496,7 @@ func (x *AddMappingRequest) String() string {
 func (*AddMappingRequest) ProtoMessage() {}
 
 func (x *AddMappingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[5]
+	mi := &file_bandcampserver_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -353,7 +509,7 @@ func (x *AddMappingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddMappingRequest.ProtoReflect.Descriptor instead.
 func (*AddMappingRequest) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{5}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AddMappingRequest) GetBandcampId() int64 {
@@ -378,7 +534,7 @@ type AddMappingResponse struct {
 
 func (x *AddMappingResponse) Reset() {
 	*x = AddMappingResponse{}
-	mi := &file_bandcampserver_proto_msgTypes[6]
+	mi := &file_bandcampserver_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -390,7 +546,7 @@ func (x *AddMappingResponse) String() string {
 func (*AddMappingResponse) ProtoMessage() {}
 
 func (x *AddMappingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[6]
+	mi := &file_bandcampserver_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -403,7 +559,7 @@ func (x *AddMappingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddMappingResponse.ProtoReflect.Descriptor instead.
 func (*AddMappingResponse) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{6}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{7}
 }
 
 type ResetRequest struct {
@@ -414,7 +570,7 @@ type ResetRequest struct {
 
 func (x *ResetRequest) Reset() {
 	*x = ResetRequest{}
-	mi := &file_bandcampserver_proto_msgTypes[7]
+	mi := &file_bandcampserver_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -426,7 +582,7 @@ func (x *ResetRequest) String() string {
 func (*ResetRequest) ProtoMessage() {}
 
 func (x *ResetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[7]
+	mi := &file_bandcampserver_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -439,7 +595,7 @@ func (x *ResetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetRequest.ProtoReflect.Descriptor instead.
 func (*ResetRequest) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{7}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{8}
 }
 
 type ResetResponse struct {
@@ -450,7 +606,7 @@ type ResetResponse struct {
 
 func (x *ResetResponse) Reset() {
 	*x = ResetResponse{}
-	mi := &file_bandcampserver_proto_msgTypes[8]
+	mi := &file_bandcampserver_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -462,7 +618,7 @@ func (x *ResetResponse) String() string {
 func (*ResetResponse) ProtoMessage() {}
 
 func (x *ResetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[8]
+	mi := &file_bandcampserver_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -475,7 +631,7 @@ func (x *ResetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetResponse.ProtoReflect.Descriptor instead.
 func (*ResetResponse) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{8}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{9}
 }
 
 type LookupRequest struct {
@@ -487,7 +643,7 @@ type LookupRequest struct {
 
 func (x *LookupRequest) Reset() {
 	*x = LookupRequest{}
-	mi := &file_bandcampserver_proto_msgTypes[9]
+	mi := &file_bandcampserver_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -499,7 +655,7 @@ func (x *LookupRequest) String() string {
 func (*LookupRequest) ProtoMessage() {}
 
 func (x *LookupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[9]
+	mi := &file_bandcampserver_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -512,7 +668,7 @@ func (x *LookupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupRequest.ProtoReflect.Descriptor instead.
 func (*LookupRequest) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{9}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *LookupRequest) GetBandcampId() int64 {
@@ -531,7 +687,7 @@ type LookupResponse struct {
 
 func (x *LookupResponse) Reset() {
 	*x = LookupResponse{}
-	mi := &file_bandcampserver_proto_msgTypes[10]
+	mi := &file_bandcampserver_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -543,7 +699,7 @@ func (x *LookupResponse) String() string {
 func (*LookupResponse) ProtoMessage() {}
 
 func (x *LookupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bandcampserver_proto_msgTypes[10]
+	mi := &file_bandcampserver_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -556,7 +712,7 @@ func (x *LookupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupResponse.ProtoReflect.Descriptor instead.
 func (*LookupResponse) Descriptor() ([]byte, []int) {
-	return file_bandcampserver_proto_rawDescGZIP(), []int{10}
+	return file_bandcampserver_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *LookupResponse) GetBandcamp() *proto.Item {
@@ -566,11 +722,150 @@ func (x *LookupResponse) GetBandcamp() *proto.Item {
 	return nil
 }
 
+type TriggerDownloadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BandcampId    int64                  `protobuf:"varint,1,opt,name=bandcamp_id,json=bandcampId,proto3" json:"bandcamp_id,omitempty"`
+	DiscogsId     int32                  `protobuf:"varint,2,opt,name=discogs_id,json=discogsId,proto3" json:"discogs_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TriggerDownloadRequest) Reset() {
+	*x = TriggerDownloadRequest{}
+	mi := &file_bandcampserver_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TriggerDownloadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TriggerDownloadRequest) ProtoMessage() {}
+
+func (x *TriggerDownloadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bandcampserver_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TriggerDownloadRequest.ProtoReflect.Descriptor instead.
+func (*TriggerDownloadRequest) Descriptor() ([]byte, []int) {
+	return file_bandcampserver_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *TriggerDownloadRequest) GetBandcampId() int64 {
+	if x != nil {
+		return x.BandcampId
+	}
+	return 0
+}
+
+func (x *TriggerDownloadRequest) GetDiscogsId() int32 {
+	if x != nil {
+		return x.DiscogsId
+	}
+	return 0
+}
+
+type TriggerDownloadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BandcampId    int64                  `protobuf:"varint,1,opt,name=bandcamp_id,json=bandcampId,proto3" json:"bandcamp_id,omitempty"`
+	DiscogsId     int32                  `protobuf:"varint,2,opt,name=discogs_id,json=discogsId,proto3" json:"discogs_id,omitempty"`
+	State         DownloadJobState       `protobuf:"varint,3,opt,name=state,proto3,enum=bandcampserver.DownloadJobState" json:"state,omitempty"`
+	AlreadyActive bool                   `protobuf:"varint,4,opt,name=already_active,json=alreadyActive,proto3" json:"already_active,omitempty"`
+	Message       string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TriggerDownloadResponse) Reset() {
+	*x = TriggerDownloadResponse{}
+	mi := &file_bandcampserver_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TriggerDownloadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TriggerDownloadResponse) ProtoMessage() {}
+
+func (x *TriggerDownloadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_bandcampserver_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TriggerDownloadResponse.ProtoReflect.Descriptor instead.
+func (*TriggerDownloadResponse) Descriptor() ([]byte, []int) {
+	return file_bandcampserver_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *TriggerDownloadResponse) GetBandcampId() int64 {
+	if x != nil {
+		return x.BandcampId
+	}
+	return 0
+}
+
+func (x *TriggerDownloadResponse) GetDiscogsId() int32 {
+	if x != nil {
+		return x.DiscogsId
+	}
+	return 0
+}
+
+func (x *TriggerDownloadResponse) GetState() DownloadJobState {
+	if x != nil {
+		return x.State
+	}
+	return DownloadJobState_DOWNLOAD_JOB_STATE_UNSPECIFIED
+}
+
+func (x *TriggerDownloadResponse) GetAlreadyActive() bool {
+	if x != nil {
+		return x.AlreadyActive
+	}
+	return false
+}
+
+func (x *TriggerDownloadResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_bandcampserver_proto protoreflect.FileDescriptor
 
 const file_bandcampserver_proto_rawDesc = "" +
 	"\n" +
-	"\x14bandcampserver.proto\x12\x0ebandcampserver\x1a8github.com/brotherlogic/bandcamplib/proto/bandcamp.proto\"\xf1\a\n" +
+	"\x14bandcampserver.proto\x12\x0ebandcampserver\x1a8github.com/brotherlogic/bandcamplib/proto/bandcamp.proto\"\x89\x02\n" +
+	"\vDownloadJob\x12\x1d\n" +
+	"\n" +
+	"discogs_id\x18\x01 \x01(\x05R\tdiscogsId\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\x03R\n" +
+	"instanceId\x126\n" +
+	"\x05state\x18\x03 \x01(\x0e2 .bandcampserver.DownloadJobStateR\x05state\x12\x1a\n" +
+	"\battempts\x18\x04 \x01(\x05R\battempts\x12!\n" +
+	"\flast_attempt\x18\x05 \x01(\x03R\vlastAttempt\x12$\n" +
+	"\x0ealert_issue_id\x18\x06 \x01(\x05R\falertIssueId\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\a \x01(\tR\tlastError\"\xb2\t\n" +
 	"\x06Config\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12,\n" +
 	"\x12last_token_refresh\x18\x02 \x01(\x03R\x10lastTokenRefresh\x12'\n" +
@@ -583,9 +878,10 @@ const file_bandcampserver_proto_rawDesc = "" +
 	"\flast_process\x18\b \x01(\x03R\vlastProcess\x12'\n" +
 	"\x0fidentity_cookie\x18\t \x01(\tR\x0eidentityCookie\x12.\n" +
 	"\x13last_cookie_refresh\x18\n" +
-	" \x01(\x03R\x11lastCookieRefresh\x12f\n" +
-	"\x16download_link_failures\x18\v \x03(\v20.bandcampserver.Config.DownloadLinkFailuresEntryR\x14downloadLinkFailures\x12-\n" +
-	"\x13auth_alert_issue_id\x18\f \x01(\x05R\x10authAlertIssueId\x1a:\n" +
+	" \x01(\x03R\x11lastCookieRefresh\x12j\n" +
+	"\x16download_link_failures\x18\v \x03(\v20.bandcampserver.Config.DownloadLinkFailuresEntryB\x02\x18\x01R\x14downloadLinkFailures\x12-\n" +
+	"\x13auth_alert_issue_id\x18\f \x01(\x05R\x10authAlertIssueId\x12Y\n" +
+	"\x11pending_downloads\x18\r \x03(\v2,.bandcampserver.Config.PendingDownloadsEntryR\x10pendingDownloads\x1a:\n" +
 	"\fMappingEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\x1a;\n" +
@@ -600,7 +896,10 @@ const file_bandcampserver_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\x1aG\n" +
 	"\x19DownloadLinkFailuresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x03R\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"*\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\x1a`\n" +
+	"\x15PendingDownloadsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\x03R\x03key\x121\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.bandcampserver.DownloadJobR\x05value:\x028\x01\"*\n" +
 	"\x10SetCookieRequest\x12\x16\n" +
 	"\x06cookie\x18\x01 \x01(\tR\x06cookie\"\x13\n" +
 	"\x11SetCookieResponse\"'\n" +
@@ -619,14 +918,33 @@ const file_bandcampserver_proto_rawDesc = "" +
 	"\vbandcamp_id\x18\x01 \x01(\x03R\n" +
 	"bandcampId\"?\n" +
 	"\x0eLookupResponse\x12-\n" +
-	"\bbandcamp\x18\x01 \x01(\v2\x11.bandcamplib.ItemR\bbandcamp2\xa6\x03\n" +
+	"\bbandcamp\x18\x01 \x01(\v2\x11.bandcamplib.ItemR\bbandcamp\"X\n" +
+	"\x16TriggerDownloadRequest\x12\x1f\n" +
+	"\vbandcamp_id\x18\x01 \x01(\x03R\n" +
+	"bandcampId\x12\x1d\n" +
+	"\n" +
+	"discogs_id\x18\x02 \x01(\x05R\tdiscogsId\"\xd2\x01\n" +
+	"\x17TriggerDownloadResponse\x12\x1f\n" +
+	"\vbandcamp_id\x18\x01 \x01(\x03R\n" +
+	"bandcampId\x12\x1d\n" +
+	"\n" +
+	"discogs_id\x18\x02 \x01(\x05R\tdiscogsId\x126\n" +
+	"\x05state\x18\x03 \x01(\x0e2 .bandcampserver.DownloadJobStateR\x05state\x12%\n" +
+	"\x0ealready_active\x18\x04 \x01(\bR\ralreadyActive\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage*\x97\x01\n" +
+	"\x10DownloadJobState\x12\"\n" +
+	"\x1eDOWNLOAD_JOB_STATE_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aDOWNLOAD_JOB_STATE_PENDING\x10\x01\x12 \n" +
+	"\x1cDOWNLOAD_JOB_STATE_SUBMITTED\x10\x02\x12\x1d\n" +
+	"\x19DOWNLOAD_JOB_STATE_FAILED\x10\x032\x8c\x04\n" +
 	"\x15BandcampServerService\x12O\n" +
 	"\bSetToken\x12\x1f.bandcampserver.SetTokenRequest\x1a .bandcampserver.SetTokenResponse\"\x00\x12R\n" +
 	"\tSetCookie\x12 .bandcampserver.SetCookieRequest\x1a!.bandcampserver.SetCookieResponse\"\x00\x12U\n" +
 	"\n" +
 	"AddMapping\x12!.bandcampserver.AddMappingRequest\x1a\".bandcampserver.AddMappingResponse\"\x00\x12F\n" +
 	"\x05Reset\x12\x1c.bandcampserver.ResetRequest\x1a\x1d.bandcampserver.ResetResponse\"\x00\x12I\n" +
-	"\x06Lookup\x12\x1d.bandcampserver.LookupRequest\x1a\x1e.bandcampserver.LookupResponse\"\x00B.Z,github.com/brotherlogic/bandcampserver/protob\x06proto3"
+	"\x06Lookup\x12\x1d.bandcampserver.LookupRequest\x1a\x1e.bandcampserver.LookupResponse\"\x00\x12d\n" +
+	"\x0fTriggerDownload\x12&.bandcampserver.TriggerDownloadRequest\x1a'.bandcampserver.TriggerDownloadResponse\"\x00B.Z,github.com/brotherlogic/bandcampserver/protob\x06proto3"
 
 var (
 	file_bandcampserver_proto_rawDescOnce sync.Once
@@ -640,49 +958,61 @@ func file_bandcampserver_proto_rawDescGZIP() []byte {
 	return file_bandcampserver_proto_rawDescData
 }
 
-var file_bandcampserver_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_bandcampserver_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_bandcampserver_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_bandcampserver_proto_goTypes = []any{
-	(*Config)(nil),             // 0: bandcampserver.Config
-	(*SetCookieRequest)(nil),   // 1: bandcampserver.SetCookieRequest
-	(*SetCookieResponse)(nil),  // 2: bandcampserver.SetCookieResponse
-	(*SetTokenRequest)(nil),    // 3: bandcampserver.SetTokenRequest
-	(*SetTokenResponse)(nil),   // 4: bandcampserver.SetTokenResponse
-	(*AddMappingRequest)(nil),  // 5: bandcampserver.AddMappingRequest
-	(*AddMappingResponse)(nil), // 6: bandcampserver.AddMappingResponse
-	(*ResetRequest)(nil),       // 7: bandcampserver.ResetRequest
-	(*ResetResponse)(nil),      // 8: bandcampserver.ResetResponse
-	(*LookupRequest)(nil),      // 9: bandcampserver.LookupRequest
-	(*LookupResponse)(nil),     // 10: bandcampserver.LookupResponse
-	nil,                        // 11: bandcampserver.Config.MappingEntry
-	nil,                        // 12: bandcampserver.Config.IssueIdsEntry
-	nil,                        // 13: bandcampserver.Config.AddedDateEntry
-	nil,                        // 14: bandcampserver.Config.LastValidateDateEntry
-	nil,                        // 15: bandcampserver.Config.DownloadLinkFailuresEntry
-	(*proto.Item)(nil),         // 16: bandcamplib.Item
+	(DownloadJobState)(0),           // 0: bandcampserver.DownloadJobState
+	(*DownloadJob)(nil),             // 1: bandcampserver.DownloadJob
+	(*Config)(nil),                  // 2: bandcampserver.Config
+	(*SetCookieRequest)(nil),        // 3: bandcampserver.SetCookieRequest
+	(*SetCookieResponse)(nil),       // 4: bandcampserver.SetCookieResponse
+	(*SetTokenRequest)(nil),         // 5: bandcampserver.SetTokenRequest
+	(*SetTokenResponse)(nil),        // 6: bandcampserver.SetTokenResponse
+	(*AddMappingRequest)(nil),       // 7: bandcampserver.AddMappingRequest
+	(*AddMappingResponse)(nil),      // 8: bandcampserver.AddMappingResponse
+	(*ResetRequest)(nil),            // 9: bandcampserver.ResetRequest
+	(*ResetResponse)(nil),           // 10: bandcampserver.ResetResponse
+	(*LookupRequest)(nil),           // 11: bandcampserver.LookupRequest
+	(*LookupResponse)(nil),          // 12: bandcampserver.LookupResponse
+	(*TriggerDownloadRequest)(nil),  // 13: bandcampserver.TriggerDownloadRequest
+	(*TriggerDownloadResponse)(nil), // 14: bandcampserver.TriggerDownloadResponse
+	nil,                             // 15: bandcampserver.Config.MappingEntry
+	nil,                             // 16: bandcampserver.Config.IssueIdsEntry
+	nil,                             // 17: bandcampserver.Config.AddedDateEntry
+	nil,                             // 18: bandcampserver.Config.LastValidateDateEntry
+	nil,                             // 19: bandcampserver.Config.DownloadLinkFailuresEntry
+	nil,                             // 20: bandcampserver.Config.PendingDownloadsEntry
+	(*proto.Item)(nil),              // 21: bandcamplib.Item
 }
 var file_bandcampserver_proto_depIdxs = []int32{
-	16, // 0: bandcampserver.Config.items:type_name -> bandcamplib.Item
-	11, // 1: bandcampserver.Config.mapping:type_name -> bandcampserver.Config.MappingEntry
-	12, // 2: bandcampserver.Config.issue_ids:type_name -> bandcampserver.Config.IssueIdsEntry
-	13, // 3: bandcampserver.Config.added_date:type_name -> bandcampserver.Config.AddedDateEntry
-	14, // 4: bandcampserver.Config.last_validate_date:type_name -> bandcampserver.Config.LastValidateDateEntry
-	15, // 5: bandcampserver.Config.download_link_failures:type_name -> bandcampserver.Config.DownloadLinkFailuresEntry
-	16, // 6: bandcampserver.LookupResponse.bandcamp:type_name -> bandcamplib.Item
-	3,  // 7: bandcampserver.BandcampServerService.SetToken:input_type -> bandcampserver.SetTokenRequest
-	1,  // 8: bandcampserver.BandcampServerService.SetCookie:input_type -> bandcampserver.SetCookieRequest
-	5,  // 9: bandcampserver.BandcampServerService.AddMapping:input_type -> bandcampserver.AddMappingRequest
-	7,  // 10: bandcampserver.BandcampServerService.Reset:input_type -> bandcampserver.ResetRequest
-	9,  // 11: bandcampserver.BandcampServerService.Lookup:input_type -> bandcampserver.LookupRequest
-	4,  // 12: bandcampserver.BandcampServerService.SetToken:output_type -> bandcampserver.SetTokenResponse
-	2,  // 13: bandcampserver.BandcampServerService.SetCookie:output_type -> bandcampserver.SetCookieResponse
-	6,  // 14: bandcampserver.BandcampServerService.AddMapping:output_type -> bandcampserver.AddMappingResponse
-	8,  // 15: bandcampserver.BandcampServerService.Reset:output_type -> bandcampserver.ResetResponse
-	10, // 16: bandcampserver.BandcampServerService.Lookup:output_type -> bandcampserver.LookupResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	0,  // 0: bandcampserver.DownloadJob.state:type_name -> bandcampserver.DownloadJobState
+	21, // 1: bandcampserver.Config.items:type_name -> bandcamplib.Item
+	15, // 2: bandcampserver.Config.mapping:type_name -> bandcampserver.Config.MappingEntry
+	16, // 3: bandcampserver.Config.issue_ids:type_name -> bandcampserver.Config.IssueIdsEntry
+	17, // 4: bandcampserver.Config.added_date:type_name -> bandcampserver.Config.AddedDateEntry
+	18, // 5: bandcampserver.Config.last_validate_date:type_name -> bandcampserver.Config.LastValidateDateEntry
+	19, // 6: bandcampserver.Config.download_link_failures:type_name -> bandcampserver.Config.DownloadLinkFailuresEntry
+	20, // 7: bandcampserver.Config.pending_downloads:type_name -> bandcampserver.Config.PendingDownloadsEntry
+	21, // 8: bandcampserver.LookupResponse.bandcamp:type_name -> bandcamplib.Item
+	0,  // 9: bandcampserver.TriggerDownloadResponse.state:type_name -> bandcampserver.DownloadJobState
+	1,  // 10: bandcampserver.Config.PendingDownloadsEntry.value:type_name -> bandcampserver.DownloadJob
+	5,  // 11: bandcampserver.BandcampServerService.SetToken:input_type -> bandcampserver.SetTokenRequest
+	3,  // 12: bandcampserver.BandcampServerService.SetCookie:input_type -> bandcampserver.SetCookieRequest
+	7,  // 13: bandcampserver.BandcampServerService.AddMapping:input_type -> bandcampserver.AddMappingRequest
+	9,  // 14: bandcampserver.BandcampServerService.Reset:input_type -> bandcampserver.ResetRequest
+	11, // 15: bandcampserver.BandcampServerService.Lookup:input_type -> bandcampserver.LookupRequest
+	13, // 16: bandcampserver.BandcampServerService.TriggerDownload:input_type -> bandcampserver.TriggerDownloadRequest
+	6,  // 17: bandcampserver.BandcampServerService.SetToken:output_type -> bandcampserver.SetTokenResponse
+	4,  // 18: bandcampserver.BandcampServerService.SetCookie:output_type -> bandcampserver.SetCookieResponse
+	8,  // 19: bandcampserver.BandcampServerService.AddMapping:output_type -> bandcampserver.AddMappingResponse
+	10, // 20: bandcampserver.BandcampServerService.Reset:output_type -> bandcampserver.ResetResponse
+	12, // 21: bandcampserver.BandcampServerService.Lookup:output_type -> bandcampserver.LookupResponse
+	14, // 22: bandcampserver.BandcampServerService.TriggerDownload:output_type -> bandcampserver.TriggerDownloadResponse
+	17, // [17:23] is the sub-list for method output_type
+	11, // [11:17] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_bandcampserver_proto_init() }
@@ -695,13 +1025,14 @@ func file_bandcampserver_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bandcampserver_proto_rawDesc), len(file_bandcampserver_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   16,
+			NumEnums:      1,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_bandcampserver_proto_goTypes,
 		DependencyIndexes: file_bandcampserver_proto_depIdxs,
+		EnumInfos:         file_bandcampserver_proto_enumTypes,
 		MessageInfos:      file_bandcampserver_proto_msgTypes,
 	}.Build()
 	File_bandcampserver_proto = out.File
