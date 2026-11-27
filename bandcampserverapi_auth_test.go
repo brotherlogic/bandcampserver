@@ -120,6 +120,7 @@ type apiTestIssueCall struct {
 type apiTestIssueManager struct {
 	mu             sync.Mutex
 	immediateCalls []apiTestIssueCall
+	raiseCalls     []apiTestIssueCall
 	nextIssueID    int32
 	immediateErr   error
 	deleteCalls    []int32
@@ -154,13 +155,29 @@ func (m *apiTestIssueManager) DeleteIssue(ctx context.Context, number int32) err
 	return m.deleteErr
 }
 
-func (m *apiTestIssueManager) RaiseIssue(title, body string, labels ...string) {}
+func (m *apiTestIssueManager) RaiseIssue(title, body string, labels ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.raiseCalls = append(m.raiseCalls, apiTestIssueCall{
+		title:  title,
+		body:   body,
+		labels: labels,
+	})
+}
 
 func (m *apiTestIssueManager) immediateSnapshot() []apiTestIssueCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := make([]apiTestIssueCall, len(m.immediateCalls))
 	copy(cp, m.immediateCalls)
+	return cp
+}
+
+func (m *apiTestIssueManager) raiseSnapshot() []apiTestIssueCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]apiTestIssueCall, len(m.raiseCalls))
+	copy(cp, m.raiseCalls)
 	return cp
 }
 
@@ -797,4 +814,233 @@ func TestRPCs_ConcurrentSerialization(t *testing.T) {
 	if _, exists := saved.GetDownloadLinkFailures()[2]; exists {
 		t.Errorf("expected DownloadLinkFailures[2] deleted, got %v", saved.GetDownloadLinkFailures())
 	}
+}
+
+func TestRefreshPaths_ItemUrlPersistenceAndStaleOverwrite(t *testing.T) {
+	fixedNow := time.Unix(1700009000, 0)
+
+	t.Run("SetToken authenticated success persists ItemUrl", func(t *testing.T) {
+		store := newAPITestConfigStore(t, &pb.Config{
+			Token:          "old-tok",
+			IdentityCookie: "valid-cookie",
+		})
+		s := &Server{
+			store:  store,
+			issues: &apiTestIssueManager{},
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				return &apiTestBandcampClient{
+					identityCookie: cfg.GetIdentityCookie(),
+					onRefresh:      onRefresh,
+					retrieveItemsFn: func(ctx context.Context, cb func(string)) ([]*bcpb.Item, error) {
+						return []*bcpb.Item{
+							{
+								AlbumId:       101,
+								BandName:      "Album Artist",
+								AlbumTitle:    "Album One",
+								RedownloadUrl: "https://bandcamp.com/download?id=101",
+								ItemUrl:       "https://albumartist.bandcamp.com/album/album-one",
+							},
+							{
+								AlbumId:    102,
+								BandName:   "Custom Artist",
+								AlbumTitle: "Track Two",
+								ItemUrl:    "https://music.customartist.com/track/track-two",
+							},
+						}, nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.SetToken(context.Background(), &pb.SetTokenRequest{Token: "new-tok"}); err != nil {
+			t.Fatalf("SetToken failed: %v", err)
+		}
+
+		saved := store.currentConfig(t)
+		if len(saved.GetItems()) != 2 {
+			t.Fatalf("saved Items count = %d, want 2", len(saved.GetItems()))
+		}
+		if got := saved.GetItems()[0].GetItemUrl(); got != "https://albumartist.bandcamp.com/album/album-one" {
+			t.Errorf("Items[0].ItemUrl = %q, want album URL", got)
+		}
+		if got := saved.GetItems()[1].GetItemUrl(); got != "https://music.customartist.com/track/track-two" {
+			t.Errorf("Items[1].ItemUrl = %q, want custom track URL", got)
+		}
+	})
+
+	t.Run("SetToken auth failure fallback persists unauthenticated ItemUrl", func(t *testing.T) {
+		store := newAPITestConfigStore(t, &pb.Config{
+			Token:          "old-tok",
+			IdentityCookie: "expired-cookie",
+		})
+		s := &Server{
+			store:  store,
+			issues: &apiTestIssueManager{nextIssueID: 91},
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				if cfg.GetIdentityCookie() != "" {
+					return &apiTestBandcampClient{
+						identityCookie: cfg.GetIdentityCookie(),
+						onRefresh:      onRefresh,
+						retrieveItemsFn: func(ctx context.Context, cb func(string)) ([]*bcpb.Item, error) {
+							return nil, bandcamplib.ErrAuthenticationFailed
+						},
+					}, nil
+				}
+				return &apiTestBandcampClient{
+					retrieveItemsFn: func(ctx context.Context, cb func(string)) ([]*bcpb.Item, error) {
+						return []*bcpb.Item{
+							{
+								AlbumId:    201,
+								BandName:   "Fallback Artist",
+								AlbumTitle: "Fallback Album",
+								ItemUrl:    "https://fallback.bandcamp.com/album/fallback-album",
+							},
+						}, nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.SetToken(context.Background(), &pb.SetTokenRequest{Token: "new-tok"}); err != nil {
+			t.Fatalf("SetToken fallback failed: %v", err)
+		}
+
+		saved := store.currentConfig(t)
+		if len(saved.GetItems()) != 1 || saved.GetItems()[0].GetItemUrl() != "https://fallback.bandcamp.com/album/fallback-album" {
+			t.Errorf("saved Items = %+v, want fallback ItemUrl persisted", saved.GetItems())
+		}
+	})
+
+	t.Run("SetToken unauthenticated without cookie persists ItemUrl", func(t *testing.T) {
+		store := newAPITestConfigStore(t, &pb.Config{
+			Token: "old-tok",
+		})
+		s := &Server{
+			store:  store,
+			issues: &apiTestIssueManager{},
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				return &apiTestBandcampClient{
+					retrieveItemsFn: func(ctx context.Context, cb func(string)) ([]*bcpb.Item, error) {
+						return []*bcpb.Item{
+							{
+								AlbumId:    301,
+								BandName:   "Public Artist",
+								AlbumTitle: "Public Track",
+								ItemUrl:    "https://publicartist.bandcamp.com/track/public-track",
+							},
+						}, nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.SetToken(context.Background(), &pb.SetTokenRequest{Token: "new-tok"}); err != nil {
+			t.Fatalf("SetToken failed: %v", err)
+		}
+
+		saved := store.currentConfig(t)
+		if len(saved.GetItems()) != 1 || saved.GetItems()[0].GetItemUrl() != "https://publicartist.bandcamp.com/track/public-track" {
+			t.Errorf("saved Items = %+v, want unauthenticated ItemUrl persisted", saved.GetItems())
+		}
+	})
+
+	t.Run("SetCookie persists ItemUrl", func(t *testing.T) {
+		store := newAPITestConfigStore(t, &pb.Config{
+			Token: "tok-1",
+		})
+		s := &Server{
+			store:  store,
+			issues: &apiTestIssueManager{},
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				return &apiTestBandcampClient{
+					identityCookie: cfg.GetIdentityCookie(),
+					onRefresh:      onRefresh,
+					retrieveItemsFn: func(ctx context.Context, cb func(string)) ([]*bcpb.Item, error) {
+						return []*bcpb.Item{
+							{
+								AlbumId:       401,
+								BandName:      "Cookie Artist",
+								AlbumTitle:    "Cookie Album",
+								RedownloadUrl: "https://bandcamp.com/download?id=401",
+								ItemUrl:       "https://cookieartist.bandcamp.com/album/cookie-album",
+							},
+						}, nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.SetCookie(context.Background(), &pb.SetCookieRequest{Cookie: "new-cookie"}); err != nil {
+			t.Fatalf("SetCookie failed: %v", err)
+		}
+
+		saved := store.currentConfig(t)
+		if len(saved.GetItems()) != 1 || saved.GetItems()[0].GetItemUrl() != "https://cookieartist.bandcamp.com/album/cookie-album" {
+			t.Errorf("saved Items = %+v, want SetCookie ItemUrl persisted", saved.GetItems())
+		}
+	})
+
+	t.Run("SetToken and SetCookie overwrite stale ItemUrl when refreshed item omits ItemUrl", func(t *testing.T) {
+		for _, path := range []string{"SetToken", "SetCookie"} {
+			t.Run(path, func(t *testing.T) {
+				store := newAPITestConfigStore(t, &pb.Config{
+					Token:          "tok-1",
+					IdentityCookie: "valid-cookie",
+					Items: []*bcpb.Item{
+						{
+							AlbumId:    501,
+							BandName:   "Stale Artist",
+							AlbumTitle: "Stale Album",
+							ItemUrl:    "https://staleartist.bandcamp.com/album/old-url",
+						},
+					},
+				})
+				s := &Server{
+					store:  store,
+					issues: &apiTestIssueManager{},
+					bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+						return &apiTestBandcampClient{
+							identityCookie: cfg.GetIdentityCookie(),
+							onRefresh:      onRefresh,
+							retrieveItemsFn: func(ctx context.Context, cb func(string)) ([]*bcpb.Item, error) {
+								return []*bcpb.Item{
+									{
+										AlbumId:    501,
+										BandName:   "Stale Artist",
+										AlbumTitle: "Stale Album",
+										ItemUrl:    "",
+									},
+								}, nil
+							},
+						}, nil
+					},
+					now:     func() time.Time { return fixedNow },
+					logFunc: (&apiTestLogger{}).log,
+				}
+
+				if path == "SetToken" {
+					if _, err := s.SetToken(context.Background(), &pb.SetTokenRequest{Token: "tok-2"}); err != nil {
+						t.Fatalf("SetToken failed: %v", err)
+					}
+				} else {
+					if _, err := s.SetCookie(context.Background(), &pb.SetCookieRequest{Cookie: "cookie-2"}); err != nil {
+						t.Fatalf("SetCookie failed: %v", err)
+					}
+				}
+
+				saved := store.currentConfig(t)
+				if len(saved.GetItems()) != 1 || saved.GetItems()[0].GetItemUrl() != "" {
+					t.Errorf("%s: expected stale ItemUrl overwritten to empty, got %q", path, saved.GetItems()[0].GetItemUrl())
+				}
+			})
+		}
+	})
 }
