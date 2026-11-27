@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -219,19 +220,39 @@ func (s *Server) AddMapping(ctx context.Context, req *pb.AddMappingRequest) (*pb
 		return nil, err
 	}
 
-	config.Mapping[req.GetBandcampId()] = req.GetDiscogsId()
-	delete(config.DownloadLinkFailures, req.GetBandcampId())
+	bcID := req.GetBandcampId()
+	discogsID := req.GetDiscogsId()
 
-	if config.IssueIds[req.GetBandcampId()] > 0 {
-		err := s.getIssueManager().DeleteIssue(ctx, config.IssueIds[req.GetBandcampId()])
+	config.Mapping[bcID] = discogsID
+	delete(config.DownloadLinkFailures, bcID)
+
+	if config.IssueIds[bcID] > 0 {
+		err := s.getIssueManager().DeleteIssue(ctx, config.IssueIds[bcID])
 		if err != nil {
-			return nil, fmt.Errorf("unable to remove issue: %w", err)
+			return nil, sanitizeError(fmt.Errorf("unable to remove issue: %w", err), config.GetIdentityCookie())
 		}
 	}
 
-	config.LastProcess = s.nowTime().Unix()
+	if discogsID > 0 {
+		prevAlertID := config.PendingDownloads[bcID].GetAlertIssueId()
+		config.PendingDownloads[bcID] = &pb.DownloadJob{
+			DiscogsId:    discogsID,
+			State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+			AlertIssueId: prevAlertID,
+		}
+	} else if job, ok := config.PendingDownloads[bcID]; ok {
+		if job.GetAlertIssueId() > 0 {
+			if err := s.getIssueManager().DeleteIssue(ctx, job.GetAlertIssueId()); err != nil && !isIssueAlreadyClosedOrNotFound(err) {
+				return nil, sanitizeError(fmt.Errorf("unable to remove download alert issue: %w", err), config.GetIdentityCookie())
+			}
+		}
+		delete(config.PendingDownloads, bcID)
+	}
 
-	return &pb.AddMappingResponse{}, s.saveConfig(ctx, config)
+	config.LastProcess = s.nowTime().Unix()
+	updateDownloadMetrics(config)
+
+	return &pb.AddMappingResponse{}, sanitizeError(s.saveConfig(ctx, config), config.GetIdentityCookie())
 }
 
 func (s *Server) Reset(ctx context.Context, req *pb.ResetRequest) (*pb.ResetResponse, error) {
@@ -299,5 +320,93 @@ func (s *Server) SetCookie(ctx context.Context, req *pb.SetCookieRequest) (*pb.S
 }
 
 func (s *Server) TriggerDownload(ctx context.Context, req *pb.TriggerDownloadRequest) (*pb.TriggerDownloadResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "TriggerDownload not yet implemented")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	reqBC := req.GetBandcampId()
+	reqDiscogs := req.GetDiscogsId()
+	if reqBC < 0 || reqDiscogs < 0 {
+		return nil, status.Error(codes.InvalidArgument, "bandcamp_id and discogs_id must be non-negative")
+	}
+	if (reqBC == 0 && reqDiscogs == 0) || (reqBC != 0 && reqDiscogs != 0) {
+		return nil, status.Error(codes.InvalidArgument, "exactly one of bandcamp_id or discogs_id must be specified")
+	}
+
+	config, err := s.loadConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var bandcampID int64
+	var discogsID int32
+	if reqBC > 0 {
+		val, ok := config.Mapping[reqBC]
+		if !ok {
+			return nil, status.Errorf(codes.NotFound, "bandcamp_id %d is not mapped", reqBC)
+		}
+		if val <= 0 {
+			return nil, status.Errorf(codes.FailedPrecondition, "bandcamp_id %d is skipped/ignored (discogs_id=%d)", reqBC, val)
+		}
+		bandcampID = reqBC
+		discogsID = val
+	} else {
+		var matches []int64
+		for bcID, val := range config.Mapping {
+			if val == reqDiscogs {
+				matches = append(matches, bcID)
+			}
+		}
+		if len(matches) == 0 {
+			return nil, status.Errorf(codes.NotFound, "discogs_id %d is not mapped", reqDiscogs)
+		}
+		if len(matches) > 1 {
+			sort.Slice(matches, func(i, j int) bool { return matches[i] < matches[j] })
+			return nil, status.Errorf(codes.FailedPrecondition, "discogs_id %d maps to multiple bandcamp items (%v); retry using -bandcamp <id>", reqDiscogs, matches)
+		}
+		bandcampID = matches[0]
+		discogsID = reqDiscogs
+	}
+
+	existing := config.PendingDownloads[bandcampID]
+	if existing != nil && (existing.GetState() == pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING || existing.GetState() == pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED) {
+		return &pb.TriggerDownloadResponse{
+			BandcampId:    bandcampID,
+			DiscogsId:     discogsID,
+			State:         existing.GetState(),
+			AlreadyActive: true,
+			Message:       fmt.Sprintf("download job for bandcamp_id %d (discogs_id %d) is already %s", bandcampID, discogsID, existing.GetState().String()),
+		}, nil
+	}
+
+	var alertIssueID int32
+	var instanceID int64
+	if existing != nil {
+		alertIssueID = existing.GetAlertIssueId()
+		if existing.GetDiscogsId() == discogsID {
+			instanceID = existing.GetInstanceId()
+		}
+	}
+
+	config.PendingDownloads[bandcampID] = &pb.DownloadJob{
+		DiscogsId:    discogsID,
+		InstanceId:   instanceID,
+		State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+		Attempts:     0,
+		LastAttempt:  0,
+		LastError:    "",
+		AlertIssueId: alertIssueID,
+	}
+	updateDownloadMetrics(config)
+
+	if err := s.saveConfig(ctx, config); err != nil {
+		return nil, sanitizeError(err, config.GetIdentityCookie())
+	}
+
+	return &pb.TriggerDownloadResponse{
+		BandcampId:    bandcampID,
+		DiscogsId:     discogsID,
+		State:         pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+		AlreadyActive: false,
+		Message:       fmt.Sprintf("enqueued download job for bandcamp_id %d (discogs_id %d)", bandcampID, discogsID),
+	}, nil
 }
