@@ -87,6 +87,7 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 	completion.Set(float64(now.Add(time.Hour * time.Duration(24*daysToGo)).Unix()))
 
 	updateAuthMetrics(config)
+	updateDownloadMetrics(config)
 
 	return int(last24)
 }
@@ -94,6 +95,10 @@ func (s *Server) metrics(ctx context.Context, config *pb.Config) int {
 func (s *Server) validate(ctx context.Context, config *pb.Config) error {
 	now := s.nowTime()
 	for id, mid := range config.GetMapping() {
+		if mid <= 0 || config.GetAddedDate()[mid] == 0 || config.GetPendingDownloads()[id] != nil {
+			continue
+		}
+
 		// Validate once per week
 		if val, ok := config.GetLastValidateDate()[id]; !ok || now.Sub(time.Unix(val, 0)) > time.Hour*24*7 {
 			res, err := s.getRCClient().QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{ReleaseId: mid}})
