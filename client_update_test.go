@@ -1591,7 +1591,10 @@ func TestClientUpdate_Download_HappyPathEndToEnd(t *testing.T) {
 	if jobAfterAdd == nil {
 		t.Fatalf("expected PendingDownloads[2001] after AddMapping")
 	}
-	if jobAfterAdd.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING || jobAfterAdd.GetInstanceId() != 0 || jobAfterAdd.GetAlertIssueId() != 777 {
+	if _, exists := afterAdd.GetIssueIds()[2001]; exists {
+		t.Errorf("expected IssueIds[2001] deleted after AddMapping, got %v", afterAdd.GetIssueIds())
+	}
+	if jobAfterAdd.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING || jobAfterAdd.GetInstanceId() != 0 || jobAfterAdd.GetAlertIssueId() != 0 {
 		t.Fatalf("unexpected job after AddMapping: %+v", jobAfterAdd)
 	}
 
@@ -1642,7 +1645,7 @@ func TestClientUpdate_Download_HappyPathEndToEnd(t *testing.T) {
 		t.Errorf("expected 0 GetDownloadStatus calls before 30s poll interval, got %d", len(cd.statusCalls))
 	}
 
-	// Tick 3 (+35s total): GetDownloadStatus completes job, deletes entry, and closes alert issue.
+	// Tick 3 (+35s total): GetDownloadStatus completes job and deletes entry.
 	currentNow = currentNow.Add(25 * time.Second)
 	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
 		t.Fatalf("ClientUpdate tick 3 failed: %v", err)

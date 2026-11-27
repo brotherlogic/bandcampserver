@@ -143,6 +143,9 @@ func TestAddMapping_EnqueuesPendingJobFast(t *testing.T) {
 	if saved.GetMapping()[101] != 5001 {
 		t.Errorf("Mapping[101] = %d, want 5001", saved.GetMapping()[101])
 	}
+	if _, exists := saved.GetIssueIds()[101]; exists {
+		t.Errorf("expected IssueIds[101] deleted, got %v", saved.GetIssueIds())
+	}
 	if _, exists := saved.GetDownloadLinkFailures()[101]; exists {
 		t.Errorf("expected DownloadLinkFailures[101] deleted, got %v", saved.GetDownloadLinkFailures())
 	}
@@ -162,7 +165,7 @@ func TestAddMapping_EnqueuesPendingJobFast(t *testing.T) {
 	assertDownloadJobGauges(t, 1, 0, 0)
 }
 
-func TestAddMapping_RemapResetsJobAndPreservesAlertIssueId(t *testing.T) {
+func TestAddMapping_RemapResetsJobAndClosesAlert(t *testing.T) {
 	states := []pb.DownloadJobState{
 		pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
 		pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED,
@@ -206,8 +209,9 @@ func TestAddMapping_RemapResetsJobAndPreservesAlertIssueId(t *testing.T) {
 				t.Fatalf("AddMapping failed: %v", err)
 			}
 
-			if deletes := issues.deletes(); len(deletes) != 0 {
-				t.Errorf("expected no DeleteIssue calls on re-map, got %v", deletes)
+			deletes := issues.deletes()
+			if len(deletes) != 1 || deletes[0] != 88 {
+				t.Errorf("DeleteIssue calls = %v, want [88]", deletes)
 			}
 
 			saved := store.currentConfig(t)
@@ -217,7 +221,7 @@ func TestAddMapping_RemapResetsJobAndPreservesAlertIssueId(t *testing.T) {
 				State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
 				Attempts:     0,
 				LastAttempt:  0,
-				AlertIssueId: 88,
+				AlertIssueId: 0,
 				LastError:    "",
 			}
 			gotJob := saved.GetPendingDownloads()[101]
@@ -227,6 +231,153 @@ func TestAddMapping_RemapResetsJobAndPreservesAlertIssueId(t *testing.T) {
 			assertDownloadJobGauges(t, 1, 0, 0)
 		})
 	}
+
+	alreadyClosedCases := []struct {
+		name string
+		err  error
+	}{
+		{name: "grpc NotFound", err: status.Error(codes.NotFound, "issue not found")},
+		{name: "already closed message", err: errors.New("issue already closed")},
+	}
+	for _, tc := range alreadyClosedCases {
+		t.Run("tolerates already-closed/not-found missing-mapping issue and clears IssueIds/"+tc.name, func(t *testing.T) {
+			store := newAPITestConfigStore(t, &pb.Config{
+				Mapping:  map[int64]int32{},
+				IssueIds: map[int64]int32{101: 77},
+			})
+			issues := &triggerTestIssueManager{
+				deleteErrFn: func(number int32) error { return tc.err },
+			}
+			s := &Server{
+				store:   store,
+				issues:  issues,
+				now:     func() time.Time { return time.Unix(1700011000, 0) },
+				logFunc: (&apiTestLogger{}).log,
+			}
+
+			_, err := s.AddMapping(context.Background(), &pb.AddMappingRequest{
+				BandcampId: 101,
+				DiscogsId:  5001,
+			})
+			if err != nil {
+				t.Fatalf("AddMapping should tolerate %q, got error: %v", tc.name, err)
+			}
+
+			deletes := issues.deletes()
+			if len(deletes) != 1 || deletes[0] != 77 {
+				t.Errorf("DeleteIssue calls = %v, want [77]", deletes)
+			}
+			saved := store.currentConfig(t)
+			if _, exists := saved.GetIssueIds()[101]; exists {
+				t.Errorf("expected IssueIds[101] deleted, got %v", saved.GetIssueIds())
+			}
+			wantJob := &pb.DownloadJob{
+				DiscogsId: 5001,
+				State:     pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+			}
+			if !proto.Equal(saved.GetPendingDownloads()[101], wantJob) {
+				t.Errorf("PendingDownloads[101] = %+v, want %+v", saved.GetPendingDownloads()[101], wantJob)
+			}
+		})
+	}
+
+	t.Run("best-effort alert close on remap tolerates already-closed and transient error", func(t *testing.T) {
+		for _, tc := range alreadyClosedCases {
+			t.Run("already_closed_"+tc.name, func(t *testing.T) {
+				store := newAPITestConfigStore(t, &pb.Config{
+					Mapping: map[int64]int32{101: 5001},
+					PendingDownloads: map[int64]*pb.DownloadJob{
+						101: {
+							DiscogsId:    5001,
+							State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED,
+							AlertIssueId: 88,
+						},
+					},
+				})
+				issues := &triggerTestIssueManager{
+					deleteErrFn: func(number int32) error { return tc.err },
+				}
+				logger := &apiTestLogger{}
+				s := &Server{
+					store:   store,
+					issues:  issues,
+					now:     func() time.Time { return time.Unix(1700011000, 0) },
+					logFunc: logger.log,
+				}
+
+				if _, err := s.AddMapping(context.Background(), &pb.AddMappingRequest{
+					BandcampId: 101,
+					DiscogsId:  6002,
+				}); err != nil {
+					t.Fatalf("AddMapping failed: %v", err)
+				}
+
+				saved := store.currentConfig(t)
+				if got := saved.GetPendingDownloads()[101].GetAlertIssueId(); got != 0 {
+					t.Errorf("AlertIssueId = %d, want 0", got)
+				}
+				for _, entry := range logger.entries() {
+					if strings.Contains(entry, "Failed to close download alert") {
+						t.Errorf("expected no alert-close warning for already-closed issue, got %q", entry)
+					}
+				}
+			})
+		}
+
+		t.Run("transient error logs sanitized warning and resets AlertIssueId", func(t *testing.T) {
+			const secretCookie = "secret-cookie-remap-warn"
+			store := newAPITestConfigStore(t, &pb.Config{
+				IdentityCookie: secretCookie,
+				Mapping:        map[int64]int32{101: 5001},
+				PendingDownloads: map[int64]*pb.DownloadJob{
+					101: {
+						DiscogsId:    5001,
+						State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED,
+						AlertIssueId: 88,
+					},
+				},
+			})
+			issues := &triggerTestIssueManager{
+				deleteErrFn: func(number int32) error {
+					return fmt.Errorf("github 500 cookie=%s", secretCookie)
+				},
+			}
+			logger := &apiTestLogger{}
+			s := &Server{
+				store:   store,
+				issues:  issues,
+				now:     func() time.Time { return time.Unix(1700011000, 0) },
+				logFunc: logger.log,
+			}
+
+			if _, err := s.AddMapping(context.Background(), &pb.AddMappingRequest{
+				BandcampId: 101,
+				DiscogsId:  6002,
+			}); err != nil {
+				t.Fatalf("AddMapping should succeed best-effort on alert close error, got: %v", err)
+			}
+
+			saved := store.currentConfig(t)
+			if got := saved.GetPendingDownloads()[101].GetAlertIssueId(); got != 0 {
+				t.Errorf("AlertIssueId = %d, want 0", got)
+			}
+			var alertWarnings []string
+			for _, entry := range logger.entries() {
+				if strings.Contains(entry, secretCookie) {
+					t.Errorf("log leaked identity cookie: %q", entry)
+				}
+				if strings.Contains(entry, "Failed to close download alert") {
+					alertWarnings = append(alertWarnings, entry)
+				}
+			}
+			if len(alertWarnings) != 1 {
+				t.Fatalf("expected 1 alert-close warning log, got %v", logger.entries())
+			}
+			if !strings.Contains(alertWarnings[0], "[REDACTED]") {
+				t.Errorf("expected sanitized warning with [REDACTED], got %q", alertWarnings[0])
+			}
+		})
+	})
 }
 
 func TestAddMapping_SkipSentinelDeletesJobAndClosesAlert(t *testing.T) {
@@ -518,7 +669,7 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 		assertDownloadJobGauges(t, 1, 0, 0)
 	})
 
-	t.Run("failed job matching discogs_id preserves AlertIssueId and InstanceId", func(t *testing.T) {
+	t.Run("failed job matching discogs_id closes AlertIssueId and preserves InstanceId", func(t *testing.T) {
 		for _, byDiscogs := range []bool{false, true} {
 			store := newAPITestConfigStore(t, &pb.Config{
 				Mapping: map[int64]int32{101: 5001},
@@ -534,8 +685,10 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 					},
 				},
 			})
+			issues := &triggerTestIssueManager{}
 			s := &Server{
 				store:   store,
+				issues:  issues,
 				now:     func() time.Time { return time.Unix(1700013000, 0) },
 				logFunc: (&apiTestLogger{}).log,
 			}
@@ -553,6 +706,11 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 				t.Errorf("unexpected resp: %+v", resp)
 			}
 
+			deletes := issues.deletes()
+			if len(deletes) != 1 || deletes[0] != 91 {
+				t.Errorf("DeleteIssue calls = %v, want [91]", deletes)
+			}
+
 			saved := store.currentConfig(t)
 			wantJob := &pb.DownloadJob{
 				DiscogsId:    5001,
@@ -560,7 +718,7 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 				State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
 				Attempts:     0,
 				LastAttempt:  0,
-				AlertIssueId: 91,
+				AlertIssueId: 0,
 				LastError:    "",
 			}
 			if !proto.Equal(saved.GetPendingDownloads()[101], wantJob) {
@@ -570,7 +728,7 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("failed job mismatched discogs_id preserves AlertIssueId and clears InstanceId", func(t *testing.T) {
+	t.Run("failed job mismatched discogs_id closes AlertIssueId and clears InstanceId", func(t *testing.T) {
 		store := newAPITestConfigStore(t, &pb.Config{
 			Mapping: map[int64]int32{101: 6002},
 			PendingDownloads: map[int64]*pb.DownloadJob{
@@ -585,8 +743,10 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 				},
 			},
 		})
+		issues := &triggerTestIssueManager{}
 		s := &Server{
 			store:   store,
+			issues:  issues,
 			now:     func() time.Time { return time.Unix(1700013000, 0) },
 			logFunc: (&apiTestLogger{}).log,
 		}
@@ -599,6 +759,11 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 			t.Errorf("unexpected resp: %+v", resp)
 		}
 
+		deletes := issues.deletes()
+		if len(deletes) != 1 || deletes[0] != 91 {
+			t.Errorf("DeleteIssue calls = %v, want [91]", deletes)
+		}
+
 		saved := store.currentConfig(t)
 		wantJob := &pb.DownloadJob{
 			DiscogsId:    6002,
@@ -606,13 +771,114 @@ func TestTriggerDownload_HappyPaths(t *testing.T) {
 			State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
 			Attempts:     0,
 			LastAttempt:  0,
-			AlertIssueId: 91,
+			AlertIssueId: 0,
 			LastError:    "",
 		}
 		if !proto.Equal(saved.GetPendingDownloads()[101], wantJob) {
 			t.Errorf("PendingDownloads[101] = %+v, want %+v", saved.GetPendingDownloads()[101], wantJob)
 		}
 		assertDownloadJobGauges(t, 1, 0, 0)
+	})
+
+	t.Run("failed job alert close tolerates already-closed and transient error", func(t *testing.T) {
+		alreadyClosedCases := []struct {
+			name string
+			err  error
+		}{
+			{name: "grpc NotFound", err: status.Error(codes.NotFound, "not found")},
+			{name: "already closed message", err: errors.New("issue already closed")},
+		}
+		for _, tc := range alreadyClosedCases {
+			t.Run("already_closed_"+tc.name, func(t *testing.T) {
+				store := newAPITestConfigStore(t, &pb.Config{
+					Mapping: map[int64]int32{101: 5001},
+					PendingDownloads: map[int64]*pb.DownloadJob{
+						101: {
+							DiscogsId:    5001,
+							InstanceId:   777888,
+							State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED,
+							AlertIssueId: 91,
+						},
+					},
+				})
+				issues := &triggerTestIssueManager{
+					deleteErrFn: func(number int32) error { return tc.err },
+				}
+				logger := &apiTestLogger{}
+				s := &Server{
+					store:   store,
+					issues:  issues,
+					now:     func() time.Time { return time.Unix(1700013000, 0) },
+					logFunc: logger.log,
+				}
+
+				if _, err := s.TriggerDownload(context.Background(), &pb.TriggerDownloadRequest{BandcampId: 101}); err != nil {
+					t.Fatalf("TriggerDownload failed: %v", err)
+				}
+
+				saved := store.currentConfig(t)
+				if got := saved.GetPendingDownloads()[101].GetAlertIssueId(); got != 0 {
+					t.Errorf("AlertIssueId = %d, want 0", got)
+				}
+				for _, entry := range logger.entries() {
+					if strings.Contains(entry, "Failed to close download alert") {
+						t.Errorf("expected no alert-close warning for already-closed issue, got %q", entry)
+					}
+				}
+			})
+		}
+
+		t.Run("transient error logs sanitized warning and resets AlertIssueId", func(t *testing.T) {
+			const secretCookie = "secret-cookie-trigger-warn"
+			store := newAPITestConfigStore(t, &pb.Config{
+				IdentityCookie: secretCookie,
+				Mapping:        map[int64]int32{101: 5001},
+				PendingDownloads: map[int64]*pb.DownloadJob{
+					101: {
+						DiscogsId:    5001,
+						InstanceId:   777888,
+						State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED,
+						AlertIssueId: 91,
+					},
+				},
+			})
+			issues := &triggerTestIssueManager{
+				deleteErrFn: func(number int32) error {
+					return fmt.Errorf("github 500 cookie=%s", secretCookie)
+				},
+			}
+			logger := &apiTestLogger{}
+			s := &Server{
+				store:   store,
+				issues:  issues,
+				now:     func() time.Time { return time.Unix(1700013000, 0) },
+				logFunc: logger.log,
+			}
+
+			if _, err := s.TriggerDownload(context.Background(), &pb.TriggerDownloadRequest{BandcampId: 101}); err != nil {
+				t.Fatalf("TriggerDownload should succeed best-effort on alert close error, got: %v", err)
+			}
+
+			saved := store.currentConfig(t)
+			if got := saved.GetPendingDownloads()[101].GetAlertIssueId(); got != 0 {
+				t.Errorf("AlertIssueId = %d, want 0", got)
+			}
+			var alertWarnings []string
+			for _, entry := range logger.entries() {
+				if strings.Contains(entry, secretCookie) {
+					t.Errorf("log leaked identity cookie: %q", entry)
+				}
+				if strings.Contains(entry, "Failed to close download alert") {
+					alertWarnings = append(alertWarnings, entry)
+				}
+			}
+			if len(alertWarnings) != 1 {
+				t.Fatalf("expected 1 alert-close warning log, got %v", logger.entries())
+			}
+			if !strings.Contains(alertWarnings[0], "[REDACTED]") {
+				t.Errorf("expected sanitized warning with [REDACTED], got %q", alertWarnings[0])
+			}
+		})
 	})
 }
 

@@ -1107,3 +1107,149 @@ func TestProcessNextDownloadJob_CookieRedactionAcrossAllOutputs(t *testing.T) {
 		t.Errorf("returned error leaked cookie: %q", err.Error())
 	}
 }
+
+func TestRetryFailedJob_OpensNewAlertIssueOnSubsequentFailure(t *testing.T) {
+	const (
+		bcID      int64 = 2796019519
+		discogsID int32 = 31692413
+		oldAlert  int32 = 5132
+	)
+
+	cases := []struct {
+		name    string
+		trigger func(ctx context.Context, s *Server) error
+	}{
+		{
+			name: "via AddMapping",
+			trigger: func(ctx context.Context, s *Server) error {
+				_, err := s.AddMapping(ctx, &pb.AddMappingRequest{
+					BandcampId: bcID,
+					DiscogsId:  discogsID,
+				})
+				return err
+			},
+		},
+		{
+			name: "via TriggerDownload",
+			trigger: func(ctx context.Context, s *Server) error {
+				_, err := s.TriggerDownload(ctx, &pb.TriggerDownloadRequest{
+					BandcampId: bcID,
+				})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Unix(1700020000, 0)
+			store := newAPITestConfigStore(t, &pb.Config{
+				IdentityCookie: "cookie-retry-alert",
+				Items: []*bcpb.Item{
+					{
+						AlbumId:       bcID,
+						BandName:      "Artist",
+						AlbumTitle:    "Album",
+						RedownloadUrl: "https://bc/2796019519",
+					},
+				},
+				Mapping: map[int64]int32{bcID: discogsID},
+				PendingDownloads: map[int64]*pb.DownloadJob{
+					bcID: {
+						DiscogsId:    discogsID,
+						InstanceId:   99001,
+						State:        pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED,
+						Attempts:     3,
+						LastAttempt:  now.Add(-5 * time.Minute).Unix(),
+						LastError:    "previous failure",
+						AlertIssueId: oldAlert,
+					},
+				},
+			})
+
+			issues := &downloadsTestIssueManager{
+				nextNum: 5200,
+				deleteFn: func(ctx context.Context, number int32) error {
+					return status.Error(codes.NotFound, "issue already closed")
+				},
+			}
+			rc := &downloadsTestRCClient{
+				queryFn: func(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error) {
+					return &rcpb.QueryRecordsResponse{InstanceIds: []int64{99001}}, nil
+				},
+				getFn: func(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+					return &rcpb.GetRecordResponse{
+						Record: &rcpb.Record{
+							Metadata: &rcpb.ReleaseMetadata{GoalFolder: digitalGoalFolder},
+						},
+					}, nil
+				},
+			}
+			bcClient := &downloadsTestBandcampClient{
+				downloadFn: func(ctx context.Context, redownloadURL string, format bandcamplib.Format) (string, error) {
+					return "https://signed/2796019519", nil
+				},
+			}
+			cdClient := &downloadsTestCDClient{
+				downloadFn: func(ctx context.Context, req *cdpb.DownloadReleaseRequest) (*cdpb.DownloadReleaseResponse, error) {
+					return &cdpb.DownloadReleaseResponse{
+						State:   cdpb.DownloadState_DOWNLOAD_FAILED_PERMANENT,
+						Message: "new failure after retry",
+					}, nil
+				},
+			}
+
+			s := &Server{
+				store:    store,
+				issues:   issues,
+				rc:       rc,
+				cdClient: cdClient,
+				now:      func() time.Time { return now },
+				logFunc:  func(ctx context.Context, message string) {},
+				bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+					return bcClient, nil
+				},
+			}
+
+			if err := tc.trigger(ctx, s); err != nil {
+				t.Fatalf("trigger failed: %v", err)
+			}
+
+			if len(issues.deleted) != 1 || issues.deleted[0] != oldAlert {
+				t.Fatalf("DeleteIssue calls = %v, want [%d]", issues.deleted, oldAlert)
+			}
+
+			persisted := store.currentConfig(t)
+			pendingJob := persisted.GetPendingDownloads()[bcID]
+			if pendingJob == nil || pendingJob.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING {
+				t.Fatalf("expected PENDING job after retry, got %+v", pendingJob)
+			}
+			if pendingJob.GetAlertIssueId() != 0 {
+				t.Fatalf("expected AlertIssueId reset to 0 after retry, got %d", pendingJob.GetAlertIssueId())
+			}
+
+			cfg, err := s.loadConfig(ctx)
+			if err != nil {
+				t.Fatalf("loadConfig failed: %v", err)
+			}
+			if err := s.processNextDownloadJob(ctx, cfg); err != nil {
+				t.Fatalf("processNextDownloadJob failed: %v", err)
+			}
+
+			failedJob := cfg.GetPendingDownloads()[bcID]
+			if failedJob == nil || failedJob.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED {
+				t.Fatalf("expected FAILED job after subsequent failure, got %+v", failedJob)
+			}
+			if len(issues.immediate) != 1 {
+				t.Fatalf("expected 1 new alert issue opened, got %d", len(issues.immediate))
+			}
+			if failedJob.GetAlertIssueId() != 5201 {
+				t.Errorf("AlertIssueId = %d, want 5201", failedJob.GetAlertIssueId())
+			}
+			if !strings.Contains(issues.immediate[0].body, "new failure after retry") {
+				t.Errorf("new alert issue body missing failure reason:\n%s", issues.immediate[0].body)
+			}
+		})
+	}
+}
