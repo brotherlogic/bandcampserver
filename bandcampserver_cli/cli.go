@@ -37,7 +37,7 @@ func sanitizeSecret(msg string, secrets ...string) string {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: bandcampserver_cli <subcommand> [flags]")
-	fmt.Fprintln(w, "Subcommands: lookup, token, cookie, mapping, reset, ping")
+	fmt.Fprintln(w, "Subcommands: lookup, token, cookie, mapping, download, reset, ping")
 }
 
 func withClient(ctx context.Context, stderr io.Writer, dial dialFunc, secrets []string, fn func(pb.BandcampServerServiceClient, pbrc.ClientUpdateServiceClient) int) int {
@@ -124,6 +124,55 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, dial dial
 			if _, err := client.AddMapping(ctx, &pb.AddMappingRequest{BandcampId: *bc, DiscogsId: int32(*dc)}); err != nil {
 				fmt.Fprintf(stderr, "Mapping problem: %v\n", err)
 				return 1
+			}
+			return 0
+		})
+
+	case "download":
+		downloadFlags := flag.NewFlagSet("download", flag.ContinueOnError)
+		downloadFlags.SetOutput(stderr)
+		bc := downloadFlags.Int64("bandcamp", 0, "Bandcamp album ID")
+		dc := downloadFlags.Int("discogs", 0, "Discogs release ID")
+		if err := downloadFlags.Parse(args[1:]); err != nil {
+			return 1
+		}
+		var bandcampSet, discogsSet bool
+		downloadFlags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "bandcamp":
+				bandcampSet = true
+			case "discogs":
+				discogsSet = true
+			}
+		})
+		const downloadUsage = "Usage: bandcampserver_cli download (-bandcamp <id> | -discogs <id>)"
+		if downloadFlags.NArg() > 0 || bandcampSet == discogsSet {
+			fmt.Fprintln(stderr, downloadUsage)
+			return 1
+		}
+		if (bandcampSet && *bc <= 0) || (discogsSet && *dc <= 0) {
+			fmt.Fprintln(stderr, "Error: ID must be a positive integer.")
+			fmt.Fprintln(stderr, downloadUsage)
+			return 1
+		}
+		req := &pb.TriggerDownloadRequest{}
+		if bandcampSet {
+			req.BandcampId = *bc
+		} else {
+			req.DiscogsId = int32(*dc)
+		}
+		return withClient(ctx, stderr, dial, nil, func(client pb.BandcampServerServiceClient, _ pbrc.ClientUpdateServiceClient) int {
+			resp, err := client.TriggerDownload(ctx, req)
+			if err != nil {
+				fmt.Fprintf(stderr, "Error triggering download: %v\n", err)
+				return 1
+			}
+			if resp.GetAlreadyActive() {
+				fmt.Fprintf(stdout, "Download already active (bandcamp_id=%d, discogs_id=%d, state=%s): %s\n",
+					resp.GetBandcampId(), resp.GetDiscogsId(), resp.GetState().String(), resp.GetMessage())
+			} else {
+				fmt.Fprintf(stdout, "Download queued (bandcamp_id=%d, discogs_id=%d, state=%s): %s\n",
+					resp.GetBandcampId(), resp.GetDiscogsId(), resp.GetState().String(), resp.GetMessage())
 			}
 			return 0
 		})
