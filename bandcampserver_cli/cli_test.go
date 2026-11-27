@@ -15,17 +15,20 @@ import (
 
 type fakeBandcampClient struct {
 	pb.BandcampServerServiceClient
-	setCookieReqs  []*pb.SetCookieRequest
-	setTokenReqs   []*pb.SetTokenRequest
-	addMappingReqs []*pb.AddMappingRequest
-	lookupReqs     []*pb.LookupRequest
-	resetCalled    bool
+	setCookieReqs       []*pb.SetCookieRequest
+	setTokenReqs        []*pb.SetTokenRequest
+	addMappingReqs      []*pb.AddMappingRequest
+	lookupReqs          []*pb.LookupRequest
+	triggerDownloadReqs []*pb.TriggerDownloadRequest
+	resetCalled         bool
 
-	setCookieErr  error
-	setTokenErr   error
-	addMappingErr error
-	lookupErr     error
-	resetErr      error
+	setCookieErr        error
+	setTokenErr         error
+	addMappingErr       error
+	lookupErr           error
+	triggerDownloadResp *pb.TriggerDownloadResponse
+	triggerDownloadErr  error
+	resetErr            error
 }
 
 func (f *fakeBandcampClient) SetCookie(ctx context.Context, in *pb.SetCookieRequest, opts ...grpc.CallOption) (*pb.SetCookieResponse, error) {
@@ -68,6 +71,17 @@ func (f *fakeBandcampClient) Lookup(ctx context.Context, in *pb.LookupRequest, o
 	return &pb.LookupResponse{}, nil
 }
 
+func (f *fakeBandcampClient) TriggerDownload(ctx context.Context, in *pb.TriggerDownloadRequest, opts ...grpc.CallOption) (*pb.TriggerDownloadResponse, error) {
+	f.triggerDownloadReqs = append(f.triggerDownloadReqs, in)
+	if f.triggerDownloadErr != nil {
+		return nil, f.triggerDownloadErr
+	}
+	if f.triggerDownloadResp != nil {
+		return f.triggerDownloadResp, nil
+	}
+	return &pb.TriggerDownloadResponse{}, nil
+}
+
 func newTestDial(client *fakeBandcampClient, dialCalled *bool) dialFunc {
 	return func(ctx context.Context) (pb.BandcampServerServiceClient, pbrc.ClientUpdateServiceClient, func() error, error) {
 		*dialCalled = true
@@ -84,7 +98,7 @@ func TestRunInvalidArgsDoNotDial(t *testing.T) {
 		{
 			name:          "missing subcommand",
 			args:          nil,
-			wantStderrSub: "Usage:",
+			wantStderrSub: "download",
 		},
 		{
 			name:          "unknown subcommand",
@@ -245,4 +259,211 @@ func TestRunExistingSubcommands(t *testing.T) {
 			t.Fatalf("unexpected reset state: dialCalled=%v resetCalled=%v", dialCalled, client.resetCalled)
 		}
 	})
+}
+
+func TestRunDownloadInvalidArgsDoNotDial(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantStderrSub string
+	}{
+		{
+			name:          "missing flags",
+			args:          []string{"download"},
+			wantStderrSub: "Usage:",
+		},
+		{
+			name:          "both flags positive",
+			args:          []string{"download", "-bandcamp", "1", "-discogs", "2"},
+			wantStderrSub: "Usage:",
+		},
+		{
+			name:          "both flags one zero",
+			args:          []string{"download", "-bandcamp", "0", "-discogs", "2"},
+			wantStderrSub: "Usage:",
+		},
+		{
+			name:          "zero bandcamp id",
+			args:          []string{"download", "-bandcamp", "0"},
+			wantStderrSub: "positive",
+		},
+		{
+			name:          "negative bandcamp id",
+			args:          []string{"download", "-bandcamp", "-1"},
+			wantStderrSub: "positive",
+		},
+		{
+			name:          "zero discogs id",
+			args:          []string{"download", "-discogs", "0"},
+			wantStderrSub: "positive",
+		},
+		{
+			name:          "negative discogs id",
+			args:          []string{"download", "-discogs", "-5"},
+			wantStderrSub: "positive",
+		},
+		{
+			name:          "unknown flag",
+			args:          []string{"download", "-bogus"},
+			wantStderrSub: "bogus",
+		},
+		{
+			name:          "extra positional arg with flag",
+			args:          []string{"download", "-bandcamp", "123", "extra"},
+			wantStderrSub: "Usage:",
+		},
+		{
+			name:          "extra positional arg without flag",
+			args:          []string{"download", "extra"},
+			wantStderrSub: "Usage:",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeBandcampClient{}
+			dialCalled := false
+			var stdout, stderr bytes.Buffer
+
+			code := run(context.Background(), tc.args, &stdout, &stderr, newTestDial(client, &dialCalled))
+			if code != 1 {
+				t.Fatalf("expected exit code 1, got %d (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
+			}
+			if dialCalled {
+				t.Fatalf("expected dial not to be called for invalid args %v", tc.args)
+			}
+			if len(client.triggerDownloadReqs) != 0 {
+				t.Fatalf("expected no TriggerDownload RPCs, got %d", len(client.triggerDownloadReqs))
+			}
+			if !strings.Contains(stderr.String(), tc.wantStderrSub) {
+				t.Fatalf("expected stderr %q to contain %q", stderr.String(), tc.wantStderrSub)
+			}
+		})
+	}
+}
+
+func TestRunDownloadSuccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		resp           *pb.TriggerDownloadResponse
+		wantBandcampID int64
+		wantDiscogsID  int32
+		wantStdoutSubs []string
+		wantNoSub      string
+	}{
+		{
+			name: "bandcamp single dash newly queued",
+			args: []string{"download", "-bandcamp", "123"},
+			resp: &pb.TriggerDownloadResponse{
+				BandcampId:    123,
+				DiscogsId:     456,
+				State:         pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+				AlreadyActive: false,
+				Message:       "queued for download",
+			},
+			wantBandcampID: 123,
+			wantDiscogsID:  0,
+			wantStdoutSubs: []string{"queued", "123", "456", "DOWNLOAD_JOB_STATE_PENDING", "queued for download"},
+			wantNoSub:      "already active",
+		},
+		{
+			name: "bandcamp double dash already active",
+			args: []string{"download", "--bandcamp", "123"},
+			resp: &pb.TriggerDownloadResponse{
+				BandcampId:    123,
+				DiscogsId:     456,
+				State:         pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED,
+				AlreadyActive: true,
+				Message:       "download already in progress",
+			},
+			wantBandcampID: 123,
+			wantDiscogsID:  0,
+			wantStdoutSubs: []string{"already active", "123", "456", "DOWNLOAD_JOB_STATE_SUBMITTED", "download already in progress"},
+			wantNoSub:      "Download queued",
+		},
+		{
+			name: "discogs single dash newly queued",
+			args: []string{"download", "-discogs", "456"},
+			resp: &pb.TriggerDownloadResponse{
+				BandcampId:    123,
+				DiscogsId:     456,
+				State:         pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+				AlreadyActive: false,
+				Message:       "queued for download",
+			},
+			wantBandcampID: 0,
+			wantDiscogsID:  456,
+			wantStdoutSubs: []string{"queued", "123", "456", "DOWNLOAD_JOB_STATE_PENDING", "queued for download"},
+			wantNoSub:      "already active",
+		},
+		{
+			name: "discogs double dash already active",
+			args: []string{"download", "--discogs", "456"},
+			resp: &pb.TriggerDownloadResponse{
+				BandcampId:    123,
+				DiscogsId:     456,
+				State:         pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED,
+				AlreadyActive: true,
+				Message:       "download already in progress",
+			},
+			wantBandcampID: 0,
+			wantDiscogsID:  456,
+			wantStdoutSubs: []string{"already active", "123", "456", "DOWNLOAD_JOB_STATE_SUBMITTED", "download already in progress"},
+			wantNoSub:      "Download queued",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeBandcampClient{
+				triggerDownloadResp: tc.resp,
+			}
+			dialCalled := false
+			var stdout, stderr bytes.Buffer
+
+			code := run(context.Background(), tc.args, &stdout, &stderr, newTestDial(client, &dialCalled))
+			if code != 0 {
+				t.Fatalf("expected exit code 0, got %d (stderr=%q)", code, stderr.String())
+			}
+			if !dialCalled {
+				t.Fatalf("expected dial to be called")
+			}
+			if len(client.triggerDownloadReqs) != 1 {
+				t.Fatalf("expected 1 TriggerDownload call, got %d", len(client.triggerDownloadReqs))
+			}
+			req := client.triggerDownloadReqs[0]
+			if req.GetBandcampId() != tc.wantBandcampID || req.GetDiscogsId() != tc.wantDiscogsID {
+				t.Fatalf("TriggerDownload req = %+v, want bandcamp_id=%d discogs_id=%d", req, tc.wantBandcampID, tc.wantDiscogsID)
+			}
+			out := stdout.String()
+			for _, sub := range tc.wantStdoutSubs {
+				if !strings.Contains(out, sub) {
+					t.Fatalf("expected stdout %q to contain %q", out, sub)
+				}
+			}
+			if tc.wantNoSub != "" && strings.Contains(out, tc.wantNoSub) {
+				t.Fatalf("expected stdout %q not to contain %q", out, tc.wantNoSub)
+			}
+		})
+	}
+}
+
+func TestRunDownloadRPCError(t *testing.T) {
+	client := &fakeBandcampClient{
+		triggerDownloadErr: errors.New("not mapped"),
+	}
+	dialCalled := false
+	var stdout, stderr bytes.Buffer
+
+	code := run(context.Background(), []string{"download", "-bandcamp", "123"}, &stdout, &stderr, newTestDial(client, &dialCalled))
+	if code != 1 {
+		t.Fatalf("expected exit code 1 on RPC error, got %d", code)
+	}
+	if !dialCalled {
+		t.Fatalf("expected dial to be called")
+	}
+	if !strings.Contains(stderr.String(), "not mapped") {
+		t.Fatalf("expected stderr %q to contain %q", stderr.String(), "not mapped")
+	}
 }
