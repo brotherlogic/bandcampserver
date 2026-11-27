@@ -1,7 +1,7 @@
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
-github.com/brotherlogic/bandcamplib v0.0.0-20261126181011-e8c0615e22c2 h1:CT5Lt9cc+yWb2T5ZtqZA805wXCBVlD7cjvOQkGBU8Ck=
-github.com/brotherlogic/bandcamplib v0.0.0-20261126181011-e8c0615e22c2/go.mod h1:z20k7gsp4tLww8c7pbAjwJ13FrGTfWjn0Yw7xTckoEI=
+github.com/brotherlogic/bandcamplib v0.0.0-20261127181009-500b76cfd385 h1:hSEEQRCXVuPBI0IJ9+aNgrILGUE+zrKP2XLwIWIsElk=
+github.com/brotherlogic/bandcamplib v0.0.0-20261127181009-500b76cfd385/go.mod h1:z20k7gsp4tLww8c7pbAjwJ13FrGTfWjn0Yw7xTckoEI=
 github.com/brotherlogic/buildserver v0.0.0-20260909004644-56aa3e81675e h1:9wFPmrZIuB/OzoYxrvhComaHZBjrT2kjxoaXOiazK70=
 github.com/brotherlogic/buildserver v0.0.0-20260909004644-56aa3e81675e/go.mod h1:birB2JYnrIey3UnP4vTgbAkPsTslOIgh2g37k5W5MSM=
 github.com/brotherlogic/cdprocessor v0.0.0-20261126211825-f66f1c974e8b h1:vGcNECIvtDL8+NnQUHj0R00owWn999po2aTHFHrvhW4=

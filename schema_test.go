@@ -6,6 +6,7 @@ import (
 	"github.com/brotherlogic/bandcamplib"
 	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	pb "github.com/brotherlogic/bandcampserver/proto"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -24,6 +25,7 @@ func TestConfigAndSetCookieProtoRoundTrip(t *testing.T) {
 				AlbumTitle:    "Album",
 				AlbumId:       101,
 				RedownloadUrl: "https://bandcamp.com/download?id=101",
+				ItemUrl:       "https://artist.bandcamp.com/album/album",
 			},
 		},
 	}
@@ -52,6 +54,9 @@ func TestConfigAndSetCookieProtoRoundTrip(t *testing.T) {
 	}
 	if len(got.GetItems()) != 1 || got.GetItems()[0].GetRedownloadUrl() != "https://bandcamp.com/download?id=101" {
 		t.Errorf("Items[0].GetRedownloadUrl() = %v, want %q", got.GetItems(), "https://bandcamp.com/download?id=101")
+	}
+	if got.GetItems()[0].GetItemUrl() != "https://artist.bandcamp.com/album/album" {
+		t.Errorf("Items[0].GetItemUrl() = %q, want %q", got.GetItems()[0].GetItemUrl(), "https://artist.bandcamp.com/album/album")
 	}
 
 	req := &pb.SetCookieRequest{Cookie: "cookie-123"}
@@ -258,4 +263,45 @@ func TestTriggerDownloadProtoRoundTrip(t *testing.T) {
 
 func TestBandcampServerServiceInterface(t *testing.T) {
 	var _ pb.BandcampServerServiceServer = (*Server)(nil)
+}
+
+func TestConfigLegacyItemWithoutItemUrlUnmarshal(t *testing.T) {
+	var itemWire []byte
+	itemWire = protowire.AppendTag(itemWire, 1, protowire.BytesType)
+	itemWire = protowire.AppendString(itemWire, "Legacy Artist")
+	itemWire = protowire.AppendTag(itemWire, 2, protowire.BytesType)
+	itemWire = protowire.AppendString(itemWire, "Legacy Album")
+	itemWire = protowire.AppendTag(itemWire, 3, protowire.VarintType)
+	itemWire = protowire.AppendVarint(itemWire, 4242)
+	itemWire = protowire.AppendTag(itemWire, 4, protowire.BytesType)
+	itemWire = protowire.AppendString(itemWire, "https://bandcamp.com/download?id=4242")
+
+	var cfgWire []byte
+	cfgWire = protowire.AppendTag(cfgWire, 3, protowire.BytesType)
+	cfgWire = protowire.AppendBytes(cfgWire, itemWire)
+
+	var got pb.Config
+	if err := proto.Unmarshal(cfgWire, &got); err != nil {
+		t.Fatalf("proto.Unmarshal(legacy Config) failed: %v", err)
+	}
+
+	if len(got.GetItems()) != 1 {
+		t.Fatalf("len(GetItems()) = %d, want 1", len(got.GetItems()))
+	}
+	item := got.GetItems()[0]
+	if item.GetBandName() != "Legacy Artist" {
+		t.Errorf("GetBandName() = %q, want %q", item.GetBandName(), "Legacy Artist")
+	}
+	if item.GetAlbumTitle() != "Legacy Album" {
+		t.Errorf("GetAlbumTitle() = %q, want %q", item.GetAlbumTitle(), "Legacy Album")
+	}
+	if item.GetAlbumId() != 4242 {
+		t.Errorf("GetAlbumId() = %d, want 4242", item.GetAlbumId())
+	}
+	if item.GetRedownloadUrl() != "https://bandcamp.com/download?id=4242" {
+		t.Errorf("GetRedownloadUrl() = %q, want %q", item.GetRedownloadUrl(), "https://bandcamp.com/download?id=4242")
+	}
+	if item.GetItemUrl() != "" {
+		t.Errorf("GetItemUrl() = %q, want empty string", item.GetItemUrl())
+	}
 }
