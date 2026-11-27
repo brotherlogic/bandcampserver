@@ -21,6 +21,7 @@ import (
 
 	bcpb "github.com/brotherlogic/bandcamplib/proto"
 	pb "github.com/brotherlogic/bandcampserver/proto"
+	cdpb "github.com/brotherlogic/cdprocessor/proto"
 	dspb "github.com/brotherlogic/dstore/proto"
 	pbgh "github.com/brotherlogic/githubcard/proto"
 	pbg "github.com/brotherlogic/goserver/proto"
@@ -33,7 +34,8 @@ import (
 )
 
 const (
-	CONFIG_KEY = "github.com/brotherlogic/bandcampserver/config"
+	CONFIG_KEY            = "github.com/brotherlogic/bandcampserver/config"
+	cdProcessorRPCTimeout = 30 * time.Second
 )
 
 var (
@@ -70,6 +72,14 @@ var (
 		Name: "bandcampserver_discogs_candidate_lookup_total",
 		Help: "Total Discogs candidate lookups performed when opening missing-mapping issues",
 	}, []string{"outcome"})
+	downloadJobs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bandcampserver_download_jobs",
+		Help: "Current number of Bandcamp WAV download jobs by state",
+	}, []string{"state"})
+	downloadTransitionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bandcampserver_download_transitions_total",
+		Help: "Total Bandcamp WAV download state transitions by outcome",
+	}, []string{"outcome"})
 )
 
 type configStore interface {
@@ -96,6 +106,11 @@ type rcClient interface {
 	QueryRecords(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error)
 	AddRecord(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error)
 	SearchReleases(ctx context.Context, req *rcpb.SearchReleasesRequest) (*rcpb.SearchReleasesResponse, error)
+}
+
+type cdProcessorClient interface {
+	DownloadRelease(ctx context.Context, req *cdpb.DownloadReleaseRequest) (*cdpb.DownloadReleaseResponse, error)
+	GetDownloadStatus(ctx context.Context, req *cdpb.GetDownloadStatusRequest) (*cdpb.GetDownloadStatusResponse, error)
 }
 
 type dstoreConfigStore struct {
@@ -144,6 +159,41 @@ func (p *prodRCClient) SearchReleases(ctx context.Context, req *rcpb.SearchRelea
 	return p.server.rcclient.SearchReleases(ctx, req)
 }
 
+type prodCDProcessorClient struct {
+	server *Server
+}
+
+func (p *prodCDProcessorClient) dial(ctx context.Context) (cdpb.CDProcessorClient, context.Context, func(), error) {
+	conn, err := p.server.FDialServer(ctx, "cdprocessor")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	rpcCtx, cancel := context.WithTimeout(ctx, cdProcessorRPCTimeout)
+	cleanup := func() {
+		cancel()
+		conn.Close()
+	}
+	return cdpb.NewCDProcessorClient(conn), rpcCtx, cleanup, nil
+}
+
+func (p *prodCDProcessorClient) DownloadRelease(ctx context.Context, req *cdpb.DownloadReleaseRequest) (*cdpb.DownloadReleaseResponse, error) {
+	client, rpcCtx, cleanup, err := p.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return client.DownloadRelease(rpcCtx, req)
+}
+
+func (p *prodCDProcessorClient) GetDownloadStatus(ctx context.Context, req *cdpb.GetDownloadStatusRequest) (*cdpb.GetDownloadStatusResponse, error) {
+	client, rpcCtx, cleanup, err := p.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return client.GetDownloadStatus(rpcCtx, req)
+}
+
 // Server main server type
 type Server struct {
 	*goserver.GoServer
@@ -153,6 +203,7 @@ type Server struct {
 	bcFactory bandcampClientFactory
 	issues    issueManager
 	rc        rcClient
+	cdClient  cdProcessorClient
 	now       func() time.Time
 	logFunc   func(ctx context.Context, message string)
 }
@@ -167,6 +218,7 @@ func Init() *Server {
 	s.bcFactory = defaultBandcampClientFactory
 	s.issues = s.GoServer
 	s.rc = &prodRCClient{server: s}
+	s.cdClient = &prodCDProcessorClient{server: s}
 	s.now = time.Now
 	s.logFunc = s.GoServer.CtxLog
 	return s
@@ -203,6 +255,13 @@ func (s *Server) getRCClient() rcClient {
 	return &prodRCClient{server: s}
 }
 
+func (s *Server) getCDProcessorClient() cdProcessorClient {
+	if s.cdClient != nil {
+		return s.cdClient
+	}
+	return &prodCDProcessorClient{server: s}
+}
+
 func updateAuthMetrics(config *pb.Config) {
 	cookieAge.Set(float64(config.GetLastCookieRefresh()))
 	if strings.TrimSpace(config.GetIdentityCookie()) != "" && config.GetAuthAlertIssueId() == 0 {
@@ -210,6 +269,23 @@ func updateAuthMetrics(config *pb.Config) {
 	} else {
 		authValid.Set(0)
 	}
+}
+
+func updateDownloadMetrics(config *pb.Config) {
+	var pendingCount, submittedCount, failedCount float64
+	for _, job := range config.GetPendingDownloads() {
+		switch job.GetState() {
+		case pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING:
+			pendingCount++
+		case pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED:
+			submittedCount++
+		case pb.DownloadJobState_DOWNLOAD_JOB_STATE_FAILED:
+			failedCount++
+		}
+	}
+	downloadJobs.WithLabelValues("pending").Set(pendingCount)
+	downloadJobs.WithLabelValues("submitted").Set(submittedCount)
+	downloadJobs.WithLabelValues("failed").Set(failedCount)
 }
 
 // DoRegister does RPC registration
@@ -307,8 +383,12 @@ func (s *Server) loadConfig(ctx context.Context) (*pb.Config, error) {
 	if config.DownloadLinkFailures == nil {
 		config.DownloadLinkFailures = make(map[int64]int32)
 	}
+	if config.PendingDownloads == nil {
+		config.PendingDownloads = make(map[int64]*pb.DownloadJob)
+	}
 
 	updateAuthMetrics(config)
+	updateDownloadMetrics(config)
 	s.metrics(ctx, config)
 
 	s.log(ctx, fmt.Sprintf("Got token: %v", config.GetToken()))
