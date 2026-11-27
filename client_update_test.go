@@ -274,7 +274,7 @@ func TestClientUpdate_ExistingOpenIssueUntouched(t *testing.T) {
 func TestClientUpdate_ExistingOpenIssueDoesNotStarveSubsequentItems(t *testing.T) {
 	fixedNow := time.Unix(1700015000, 0)
 
-	t.Run("does not starve subsequent unmapped item while preserving one issue per tick", func(t *testing.T) {
+	t.Run("throttles additional unmapped items while an open missing-mapping issue exists", func(t *testing.T) {
 		item1 := &bcpb.Item{
 			AlbumId:    301,
 			BandName:   "Already Tracked Artist",
@@ -334,29 +334,25 @@ func TestClientUpdate_ExistingOpenIssueDoesNotStarveSubsequentItems(t *testing.T
 			t.Errorf("expected 0 Bandcamp client calls, got %d", bcCalls)
 		}
 
-		calls := issues.immediateSnapshot()
-		if len(calls) != 1 {
-			t.Fatalf("expected 1 ImmediateIssue call, got %d (%+v)", len(calls), calls)
+		if calls := issues.immediateSnapshot(); len(calls) != 0 {
+			t.Fatalf("expected 0 ImmediateIssue calls while open missing-mapping issue exists, got %d (%+v)", len(calls), calls)
 		}
-		if calls[0].title != "Bandcamp entry for Second Artist is missing mapping [302]" {
-			t.Errorf("unexpected issue title: %q", calls[0].title)
-		}
-		if !strings.Contains(calls[0].body, "https://www.discogs.com/release/444001") {
-			t.Errorf("expected Discogs candidate in issue body:\n%s", calls[0].body)
-		}
-		if strings.Contains(strings.ToLower(calls[0].body), "wav download link") {
-			t.Errorf("issue body must not contain WAV link text:\n%s", calls[0].body)
+		rc.mu.Lock()
+		searchCount := len(rc.searchCalls)
+		rc.mu.Unlock()
+		if searchCount != 0 {
+			t.Errorf("expected 0 SearchReleases calls while throttled, got %d", searchCount)
 		}
 
 		saved := store.currentConfig(t)
 		if saved.GetIssueIds()[301] != 55 {
 			t.Errorf("IssueIds[301] = %d, want 55", saved.GetIssueIds()[301])
 		}
-		if saved.GetIssueIds()[302] != 600 {
-			t.Errorf("IssueIds[302] = %d, want 600", saved.GetIssueIds()[302])
+		if saved.GetIssueIds()[302] != 0 {
+			t.Errorf("IssueIds[302] = %d, want 0 (throttled while open issue exists)", saved.GetIssueIds()[302])
 		}
 		if saved.GetIssueIds()[303] != 0 {
-			t.Errorf("IssueIds[303] = %d, want 0 (one missing-mapping issue per tick)", saved.GetIssueIds()[303])
+			t.Errorf("IssueIds[303] = %d, want 0 (throttled while open issue exists)", saved.GetIssueIds()[303])
 		}
 	})
 
@@ -2189,5 +2185,474 @@ func TestClientUpdate_Download_ManualHistoricalTriggerEndToEnd(t *testing.T) {
 	afterTick2 := store.currentConfig(t)
 	if _, exists := afterTick2.GetPendingDownloads()[2006]; exists {
 		t.Errorf("expected PendingDownloads[2006] to be deleted after completion")
+	}
+}
+
+func TestClientUpdate_DownloadNotStarvedByUnmappedItemsWithoutIssues(t *testing.T) {
+	t.Run("pending job dispatched despite unmapped item with IssueIds==0 past cooldown", func(t *testing.T) {
+		currentNow := time.Unix(1700200000, 0)
+		unmapped1 := &bcpb.Item{
+			AlbumId:    4001,
+			BandName:   "Unmapped Artist 1",
+			AlbumTitle: "Unmapped Album 1",
+		}
+		unmapped2 := &bcpb.Item{
+			AlbumId:    4002,
+			BandName:   "Unmapped Artist 2",
+			AlbumTitle: "Unmapped Album 2",
+		}
+		mapped := &bcpb.Item{
+			AlbumId:       4003,
+			BandName:      "Mapped Artist",
+			AlbumTitle:    "Mapped Album",
+			RedownloadUrl: "https://bandcamp.com/download/album?id=4003",
+		}
+
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    currentNow.Add(-10 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{unmapped1, unmapped2, mapped},
+			Mapping:        map[int64]int32{4003: 8003},
+			AddedDate:      map[int32]int64{8003: currentNow.Add(-2 * time.Hour).Unix()},
+			LastValidateDate: map[int64]int64{
+				4003: currentNow.Unix(),
+			},
+			PendingDownloads: map[int64]*pb.DownloadJob{
+				4003: {
+					DiscogsId:  8003,
+					InstanceId: 9403,
+					State:      pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+				},
+			},
+		})
+		issues := &apiTestIssueManager{nextIssueID: 5001}
+		rc := &downloadsTestRCClient{
+			getFn: func(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+				return &rcpb.GetRecordResponse{
+					Record: &rcpb.Record{
+						Release:  &rcgd.Release{Id: 1, FolderId: digitalGoalFolder, Formats: []*rcgd.Format{{Name: "File"}}},
+						Metadata: &rcpb.ReleaseMetadata{GoalFolder: digitalGoalFolder},
+					},
+				}, nil
+			},
+		}
+		cd := &downloadsTestCDClient{
+			downloadFn: func(ctx context.Context, req *cdpb.DownloadReleaseRequest) (*cdpb.DownloadReleaseResponse, error) {
+				return &cdpb.DownloadReleaseResponse{State: cdpb.DownloadState_DOWNLOAD_QUEUED}, nil
+			},
+			statusFn: func(ctx context.Context, req *cdpb.GetDownloadStatusRequest) (*cdpb.GetDownloadStatusResponse, error) {
+				return &cdpb.GetDownloadStatusResponse{State: cdpb.DownloadState_DOWNLOAD_COMPLETED}, nil
+			},
+		}
+
+		s := &Server{
+			store:    store,
+			issues:   issues,
+			rc:       rc,
+			cdClient: cd,
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				return &clientUpdateFakeBandcampClient{
+					identityCookie: cfg.GetIdentityCookie(),
+					onRefresh:      onRefresh,
+					downloadFn: func(ctx context.Context, redownloadURL string, format bandcamplib.Format, onRefresh func(string)) (string, error) {
+						return "https://p4.bcbits.com/download/wav?sig=4003", nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return currentNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		ctx := context.Background()
+		if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate tick 1 failed: %v", err)
+		}
+
+		if len(cd.downloadCalls) != 1 {
+			t.Fatalf("expected 1 DownloadRelease call, got %d", len(cd.downloadCalls))
+		}
+		if got := cd.downloadCalls[0]; got.GetReleaseId() != 8003 || got.GetInstanceId() != 9403 {
+			t.Errorf("unexpected DownloadReleaseRequest: %+v", got)
+		}
+
+		saved1 := store.currentConfig(t)
+		if job := saved1.GetPendingDownloads()[4003]; job == nil || job.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED {
+			t.Fatalf("expected SUBMITTED job for 4003, got %+v", job)
+		}
+		if len(issues.immediateSnapshot()) > 1 {
+			t.Errorf("expected at most 1 missing-mapping issue, got %d", len(issues.immediateSnapshot()))
+		}
+		if saved1.GetIssueIds()[4001] == 0 {
+			t.Errorf("expected IssueIds[4001] > 0, got 0")
+		}
+		if saved1.GetIssueIds()[4002] != 0 {
+			t.Errorf("expected IssueIds[4002] == 0, got %d", saved1.GetIssueIds()[4002])
+		}
+		if saved1.GetLastProcess() != currentNow.Unix() {
+			t.Errorf("LastProcess = %d, want %d", saved1.GetLastProcess(), currentNow.Unix())
+		}
+
+		// Tick 2 (+35s): polls status and completes download without opening another missing-mapping issue.
+		currentNow = currentNow.Add(35 * time.Second)
+		if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate tick 2 failed: %v", err)
+		}
+		if len(cd.statusCalls) != 1 || cd.statusCalls[0].GetReleaseId() != 8003 {
+			t.Fatalf("unexpected GetDownloadStatus calls: %+v", cd.statusCalls)
+		}
+		saved2 := store.currentConfig(t)
+		if _, exists := saved2.GetPendingDownloads()[4003]; exists {
+			t.Errorf("expected PendingDownloads[4003] to be deleted after completion")
+		}
+		if len(issues.immediateSnapshot()) != 1 {
+			t.Errorf("expected still 1 missing-mapping issue total, got %d", len(issues.immediateSnapshot()))
+		}
+		if saved2.GetIssueIds()[4002] != 0 {
+			t.Errorf("expected IssueIds[4002] == 0, got %d", saved2.GetIssueIds()[4002])
+		}
+	})
+
+	t.Run("submitted job polled despite unmapped item with IssueIds==0 past cooldown", func(t *testing.T) {
+		fixedNow := time.Unix(1700201000, 0)
+		unmapped1 := &bcpb.Item{
+			AlbumId:    4011,
+			BandName:   "Unmapped Poll Artist",
+			AlbumTitle: "Unmapped Poll Album",
+		}
+		mapped := &bcpb.Item{
+			AlbumId:       4012,
+			BandName:      "Mapped Poll Artist",
+			AlbumTitle:    "Mapped Poll Album",
+			RedownloadUrl: "https://bandcamp.com/download/album?id=4012",
+		}
+
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{unmapped1, mapped},
+			Mapping:        map[int64]int32{4012: 8012},
+			AddedDate:      map[int32]int64{8012: fixedNow.Add(-2 * time.Hour).Unix()},
+			LastValidateDate: map[int64]int64{
+				4012: fixedNow.Unix(),
+			},
+			PendingDownloads: map[int64]*pb.DownloadJob{
+				4012: {
+					DiscogsId:   8012,
+					InstanceId:  9412,
+					State:       pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED,
+					LastAttempt: fixedNow.Add(-45 * time.Second).Unix(),
+				},
+			},
+		})
+		issues := &apiTestIssueManager{nextIssueID: 5011}
+		rc := &downloadsTestRCClient{
+			getFn: func(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+				return &rcpb.GetRecordResponse{
+					Record: &rcpb.Record{
+						Release:  &rcgd.Release{Id: 1, FolderId: digitalGoalFolder, Formats: []*rcgd.Format{{Name: "File"}}},
+						Metadata: &rcpb.ReleaseMetadata{GoalFolder: digitalGoalFolder},
+					},
+				}, nil
+			},
+		}
+		cd := &downloadsTestCDClient{
+			statusFn: func(ctx context.Context, req *cdpb.GetDownloadStatusRequest) (*cdpb.GetDownloadStatusResponse, error) {
+				return &cdpb.GetDownloadStatusResponse{State: cdpb.DownloadState_DOWNLOAD_COMPLETED}, nil
+			},
+		}
+
+		s := &Server{
+			store:    store,
+			issues:   issues,
+			rc:       rc,
+			cdClient: cd,
+			now:      func() time.Time { return fixedNow },
+			logFunc:  (&apiTestLogger{}).log,
+		}
+
+		if _, err := s.ClientUpdate(context.Background(), &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate failed: %v", err)
+		}
+
+		if len(cd.statusCalls) != 1 || cd.statusCalls[0].GetReleaseId() != 8012 {
+			t.Fatalf("expected 1 GetDownloadStatus call for 8012, got %+v", cd.statusCalls)
+		}
+		saved := store.currentConfig(t)
+		if _, exists := saved.GetPendingDownloads()[4012]; exists {
+			t.Errorf("expected PendingDownloads[4012] to be deleted after completion")
+		}
+	})
+
+	t.Run("newly mapped item AddRecord and download not starved behind unmapped item with IssueIds==0", func(t *testing.T) {
+		fixedNow := time.Unix(1700202000, 0)
+		unmapped1 := &bcpb.Item{
+			AlbumId:    4021,
+			BandName:   "Unmapped Lead Artist",
+			AlbumTitle: "Unmapped Lead Album",
+		}
+		newlyMapped := &bcpb.Item{
+			AlbumId:       4022,
+			BandName:      "Newly Mapped Artist",
+			AlbumTitle:    "Newly Mapped Album",
+			RedownloadUrl: "https://bandcamp.com/download/album?id=4022",
+		}
+
+		store := newAPITestConfigStore(t, &pb.Config{
+			IdentityCookie: "valid-cookie",
+			LastProcess:    fixedNow.Add(-10 * time.Minute).Unix(),
+			Items:          []*bcpb.Item{unmapped1, newlyMapped},
+			Mapping:        map[int64]int32{4022: 8022},
+			AddedDate:      map[int32]int64{},
+			PendingDownloads: map[int64]*pb.DownloadJob{
+				4022: {
+					DiscogsId: 8022,
+					State:     pb.DownloadJobState_DOWNLOAD_JOB_STATE_PENDING,
+				},
+			},
+		})
+		issues := &apiTestIssueManager{nextIssueID: 5021}
+		rc := &downloadsTestRCClient{
+			getFn: func(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+				return &rcpb.GetRecordResponse{
+					Record: &rcpb.Record{
+						Release:  &rcgd.Release{Id: 1, FolderId: digitalGoalFolder, Formats: []*rcgd.Format{{Name: "File"}}},
+						Metadata: &rcpb.ReleaseMetadata{GoalFolder: digitalGoalFolder},
+					},
+				}, nil
+			},
+			queryFn: func(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error) {
+				return &rcpb.QueryRecordsResponse{}, nil
+			},
+			addFn: func(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error) {
+				return &rcpb.AddRecordResponse{
+					Added: &rcpb.Record{
+						Release: &rcgd.Release{
+							Id:         8022,
+							InstanceId: 9422,
+						},
+					},
+				}, nil
+			},
+		}
+		cd := &downloadsTestCDClient{
+			downloadFn: func(ctx context.Context, req *cdpb.DownloadReleaseRequest) (*cdpb.DownloadReleaseResponse, error) {
+				return &cdpb.DownloadReleaseResponse{State: cdpb.DownloadState_DOWNLOAD_QUEUED}, nil
+			},
+		}
+
+		s := &Server{
+			store:    store,
+			issues:   issues,
+			rc:       rc,
+			cdClient: cd,
+			bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+				return &clientUpdateFakeBandcampClient{
+					identityCookie: cfg.GetIdentityCookie(),
+					onRefresh:      onRefresh,
+					downloadFn: func(ctx context.Context, redownloadURL string, format bandcamplib.Format, onRefresh func(string)) (string, error) {
+						return "https://p4.bcbits.com/download/wav?sig=4022", nil
+					},
+				}, nil
+			},
+			now:     func() time.Time { return fixedNow },
+			logFunc: (&apiTestLogger{}).log,
+		}
+
+		ctx := context.Background()
+		// Tick 1: adds 8022 to recordcollection and captures instance_id without opening missing-mapping issues.
+		if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate tick 1 failed: %v", err)
+		}
+		if len(rc.addCalls) != 1 || rc.addCalls[0].GetToAdd().GetRelease().GetId() != 8022 {
+			t.Fatalf("expected 1 AddRecord call for 8022, got %+v", rc.addCalls)
+		}
+		tick1Cfg := store.currentConfig(t)
+		if tick1Cfg.GetAddedDate()[8022] == 0 {
+			t.Errorf("expected AddedDate[8022] > 0 after tick 1")
+		}
+		if job := tick1Cfg.GetPendingDownloads()[4022]; job == nil || job.GetInstanceId() != 9422 {
+			t.Fatalf("expected PendingDownloads[4022].InstanceId == 9422, got %+v", job)
+		}
+		if len(issues.immediateSnapshot()) != 0 {
+			t.Errorf("expected 0 missing-mapping issues on tick 1, got %d", len(issues.immediateSnapshot()))
+		}
+
+		// Tick 2: dispatches download for 8022 with captured instance_id 9422 and opens issue for 4021.
+		if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+			t.Fatalf("ClientUpdate tick 2 failed: %v", err)
+		}
+		if len(cd.downloadCalls) != 1 {
+			t.Fatalf("expected 1 DownloadRelease call on tick 2, got %d", len(cd.downloadCalls))
+		}
+		if got := cd.downloadCalls[0]; got.GetReleaseId() != 8022 || got.GetInstanceId() != 9422 {
+			t.Errorf("unexpected DownloadReleaseRequest: %+v", got)
+		}
+		tick2Cfg := store.currentConfig(t)
+		if job := tick2Cfg.GetPendingDownloads()[4022]; job == nil || job.GetState() != pb.DownloadJobState_DOWNLOAD_JOB_STATE_SUBMITTED {
+			t.Fatalf("expected SUBMITTED job for 4022, got %+v", job)
+		}
+		if len(issues.immediateSnapshot()) != 1 || tick2Cfg.GetIssueIds()[4021] != 5021 {
+			t.Errorf("expected 1 missing-mapping issue for 4021 (id 5021), got calls=%+v issueIds=%v", issues.immediateSnapshot(), tick2Cfg.GetIssueIds())
+		}
+	})
+}
+
+func TestClientUpdate_MissingMappingIssueThrottling(t *testing.T) {
+	currentNow := time.Unix(1700300000, 0)
+
+	unmappedA := &bcpb.Item{AlbumId: 4101, BandName: "Artist A", AlbumTitle: "Album A", RedownloadUrl: "https://bandcamp.com/download/album?id=4101"}
+	unmappedB := &bcpb.Item{AlbumId: 4102, BandName: "Artist B", AlbumTitle: "Album B"}
+	unmappedC := &bcpb.Item{AlbumId: 4103, BandName: "Artist C", AlbumTitle: "Album C"}
+
+	store := newAPITestConfigStore(t, &pb.Config{
+		IdentityCookie: "valid-cookie",
+		LastProcess:    currentNow.Add(-10 * time.Minute).Unix(),
+		Items:          []*bcpb.Item{unmappedA, unmappedB, unmappedC},
+	})
+	issues := &apiTestIssueManager{nextIssueID: 6100}
+	var added9101 bool
+	var rc *downloadsTestRCClient
+	rc = &downloadsTestRCClient{
+		getFn: func(ctx context.Context, req *rcpb.GetRecordRequest) (*rcpb.GetRecordResponse, error) {
+			return &rcpb.GetRecordResponse{
+				Record: &rcpb.Record{
+					Release:  &rcgd.Release{Id: 1, FolderId: digitalGoalFolder, Formats: []*rcgd.Format{{Name: "File"}}},
+					Metadata: &rcpb.ReleaseMetadata{GoalFolder: digitalGoalFolder},
+				},
+			}, nil
+		},
+		queryFn: func(ctx context.Context, req *rcpb.QueryRecordsRequest) (*rcpb.QueryRecordsResponse, error) {
+			if added9101 && req.GetReleaseId() == 9101 {
+				return &rcpb.QueryRecordsResponse{InstanceIds: []int64{9501}}, nil
+			}
+			return &rcpb.QueryRecordsResponse{}, nil
+		},
+		addFn: func(ctx context.Context, req *rcpb.AddRecordRequest) (*rcpb.AddRecordResponse, error) {
+			if req.GetToAdd().GetRelease().GetId() == 9101 {
+				added9101 = true
+			}
+			return &rcpb.AddRecordResponse{
+				Added: &rcpb.Record{
+					Release: &rcgd.Release{
+						Id:         req.GetToAdd().GetRelease().GetId(),
+						InstanceId: 9501,
+					},
+				},
+			}, nil
+		},
+	}
+	cd := &downloadsTestCDClient{
+		downloadFn: func(ctx context.Context, req *cdpb.DownloadReleaseRequest) (*cdpb.DownloadReleaseResponse, error) {
+			return &cdpb.DownloadReleaseResponse{State: cdpb.DownloadState_DOWNLOAD_COMPLETED}, nil
+		},
+	}
+
+	s := &Server{
+		store:    store,
+		issues:   issues,
+		rc:       rc,
+		cdClient: cd,
+		bcFactory: func(cfg *bcpb.Config, onRefresh func(string)) (bandcampClient, error) {
+			return &clientUpdateFakeBandcampClient{
+				identityCookie: cfg.GetIdentityCookie(),
+				onRefresh:      onRefresh,
+				downloadFn: func(ctx context.Context, redownloadURL string, format bandcamplib.Format, onRefresh func(string)) (string, error) {
+					return "https://p4.bcbits.com/download/wav?sig=4101", nil
+				},
+			}, nil
+		},
+		now:     func() time.Time { return currentNow },
+		logFunc: (&apiTestLogger{}).log,
+	}
+
+	ctx := context.Background()
+
+	// Tick 1: opens 1 issue for 4101, updates LastProcess, leaves 4102 and 4103 untouched.
+	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+		t.Fatalf("ClientUpdate tick 1 failed: %v", err)
+	}
+	if calls := issues.immediateSnapshot(); len(calls) != 1 {
+		t.Fatalf("tick 1: expected 1 issue, got %d", len(calls))
+	}
+	cfg1 := store.currentConfig(t)
+	if cfg1.GetIssueIds()[4101] == 0 {
+		t.Errorf("tick 1: expected IssueIds[4101] > 0")
+	}
+	if cfg1.GetLastProcess() != currentNow.Unix() {
+		t.Errorf("tick 1: LastProcess = %d, want %d", cfg1.GetLastProcess(), currentNow.Unix())
+	}
+	if cfg1.GetIssueIds()[4102] != 0 || cfg1.GetIssueIds()[4103] != 0 {
+		t.Errorf("tick 1: expected IssueIds[4102]==0 and [4103]==0, got %v", cfg1.GetIssueIds())
+	}
+
+	// Tick 2 (+10m, past 2m cooldown): 0 new issues because 4101 still has an open issue.
+	currentNow = currentNow.Add(10 * time.Minute)
+	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+		t.Fatalf("ClientUpdate tick 2 failed: %v", err)
+	}
+	if calls := issues.immediateSnapshot(); len(calls) != 1 {
+		t.Fatalf("tick 2: expected still 1 issue total, got %d", len(calls))
+	}
+
+	// Prepend 4100 and run Tick 3 (+20m): still 0 new issues because 4101 (later in slice) has an open issue.
+	cfgPrepend := store.currentConfig(t)
+	unmappedPrepend := &bcpb.Item{AlbumId: 4100, BandName: "Artist 0", AlbumTitle: "Album 0"}
+	cfgPrepend.Items = append([]*bcpb.Item{unmappedPrepend}, cfgPrepend.Items...)
+	if err := s.saveConfig(ctx, cfgPrepend); err != nil {
+		t.Fatalf("saveConfig failed: %v", err)
+	}
+
+	currentNow = currentNow.Add(10 * time.Minute)
+	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+		t.Fatalf("ClientUpdate tick 3 failed: %v", err)
+	}
+	if calls := issues.immediateSnapshot(); len(calls) != 1 {
+		t.Fatalf("tick 3: expected still 1 issue total, got %d", len(calls))
+	}
+
+	// Map 4101 via AddMapping (closes 4101's issue and updates LastProcess).
+	if _, err := s.AddMapping(ctx, &pb.AddMappingRequest{BandcampId: 4101, DiscogsId: 9101}); err != nil {
+		t.Fatalf("AddMapping(4101) failed: %v", err)
+	}
+
+	// Tick 4 (+30s, under 2m cooldown): adds 9101 to recordcollection, opens 0 missing-mapping issues.
+	currentNow = currentNow.Add(30 * time.Second)
+	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+		t.Fatalf("ClientUpdate tick 4 failed: %v", err)
+	}
+	if len(rc.addCalls) != 1 || rc.addCalls[0].GetToAdd().GetRelease().GetId() != 9101 {
+		t.Fatalf("tick 4: expected AddRecord for 9101, got %+v", rc.addCalls)
+	}
+	if calls := issues.immediateSnapshot(); len(calls) != 1 {
+		t.Fatalf("tick 4: expected still 1 issue total, got %d", len(calls))
+	}
+
+	// Tick 5 (+60s, still under 2m cooldown): opens 0 missing-mapping issues.
+	currentNow = currentNow.Add(30 * time.Second)
+	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+		t.Fatalf("ClientUpdate tick 5 failed: %v", err)
+	}
+	if calls := issues.immediateSnapshot(); len(calls) != 1 {
+		t.Fatalf("tick 5: expected still 1 issue total, got %d", len(calls))
+	}
+
+	// Tick 6 (+5m past AddMapping, past 2m cooldown and no open unmapped issue): opens 1 issue for 4100.
+	currentNow = currentNow.Add(4 * time.Minute)
+	if _, err := s.ClientUpdate(ctx, &rcpb.ClientUpdateRequest{InstanceId: 1}); err != nil {
+		t.Fatalf("ClientUpdate tick 6 failed: %v", err)
+	}
+	calls6 := issues.immediateSnapshot()
+	if len(calls6) != 2 {
+		t.Fatalf("tick 6: expected 2 issues total, got %d (%+v)", len(calls6), calls6)
+	}
+	if !strings.Contains(calls6[1].title, "[4100]") {
+		t.Errorf("tick 6: expected second issue for [4100], got %q", calls6[1].title)
+	}
+	cfg6 := store.currentConfig(t)
+	if cfg6.GetIssueIds()[4100] == 0 {
+		t.Errorf("tick 6: expected IssueIds[4100] > 0")
+	}
+	if cfg6.GetIssueIds()[4102] != 0 || cfg6.GetIssueIds()[4103] != 0 {
+		t.Errorf("tick 6: expected IssueIds[4102]==0 and [4103]==0, got %v", cfg6.GetIssueIds())
 	}
 }

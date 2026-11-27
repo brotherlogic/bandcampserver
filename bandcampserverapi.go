@@ -79,30 +79,10 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 	}
 
 	s.log(ctx, fmt.Sprintf("Running proc with %v done today", today))
-	for _, item := range config.Items {
-		if val, ok := config.GetMapping()[item.GetAlbumId()]; !ok {
-			// Skip processing when we've done 20 in a day
-			if s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 || today >= 30 {
-				s.log(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0))))
-				continue
-			}
-			albumID := item.GetAlbumId()
-			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v - %v (%v)", albumID, item.GetBandName(), item.GetAlbumTitle(), today))
 
-			if config.IssueIds[albumID] == 0 {
-				cookie := config.GetIdentityCookie()
-				title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
-				candidates := s.lookupDiscogsCandidates(ctx, rc, item, cookie)
-				body := buildMissingMappingIssueBody(item, candidates, cookie)
-				issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
-				if issueErr != nil {
-					return nil, sanitizeError(issueErr, cookie)
-				}
-				config.IssueIds[albumID] = issue.GetNumber()
-				return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), cookie)
-			}
-			continue
-		} else if val > 0 && config.AddedDate[val] == 0 {
+	// Phase 1: Sync newly mapped items to recordcollection and capture instance_id.
+	for _, item := range config.Items {
+		if val, ok := config.GetMapping()[item.GetAlbumId()]; ok && val > 0 && config.AddedDate[val] == 0 {
 			iids, err := rc.QueryRecords(ctx, &rcpb.QueryRecordsRequest{Query: &rcpb.QueryRecordsRequest_ReleaseId{ReleaseId: val}})
 			if err != nil {
 				return nil, err
@@ -155,8 +135,46 @@ func (s *Server) ClientUpdate(ctx context.Context, req *rcpb.ClientUpdateRequest
 		}
 	}
 
+	// Phase 2: Advance pending/submitted download jobs so unmapped items never starve downloads.
 	if err := s.processNextDownloadJob(ctx, config); err != nil {
 		return nil, err
+	}
+
+	// Phase 3: Open at most one missing-mapping issue only when no unmapped item already has an open issue.
+	hasOpenMissingMappingIssue := false
+	for _, item := range config.Items {
+		albumID := item.GetAlbumId()
+		if _, ok := config.GetMapping()[albumID]; !ok && config.IssueIds[albumID] != 0 {
+			hasOpenMissingMappingIssue = true
+			break
+		}
+	}
+
+	if !hasOpenMissingMappingIssue {
+		for _, item := range config.Items {
+			albumID := item.GetAlbumId()
+			if _, ok := config.GetMapping()[albumID]; ok {
+				continue
+			}
+			// Skip processing when we've done 30 in a day or are within the 2-minute cooldown.
+			if s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0)) < time.Minute*2 || today >= 30 {
+				s.log(ctx, fmt.Sprintf("We are Waiting for %v or %v", today, s.nowTime().Sub(time.Unix(config.GetLastProcess(), 0))))
+				break
+			}
+			s.log(ctx, fmt.Sprintf("%v is missing a mapping -> %v - %v (%v)", albumID, item.GetBandName(), item.GetAlbumTitle(), today))
+
+			cookie := config.GetIdentityCookie()
+			title := fmt.Sprintf("Bandcamp entry for %v is missing mapping [%v]", item.GetBandName(), albumID)
+			candidates := s.lookupDiscogsCandidates(ctx, rc, item, cookie)
+			body := buildMissingMappingIssueBody(item, candidates, cookie)
+			issue, issueErr := issues.ImmediateIssue(ctx, title, body, false, false)
+			if issueErr != nil {
+				return nil, sanitizeError(issueErr, cookie)
+			}
+			config.IssueIds[albumID] = issue.GetNumber()
+			config.LastProcess = s.nowTime().Unix()
+			return &rcpb.ClientUpdateResponse{}, sanitizeError(s.saveConfig(ctx, config), cookie)
+		}
 	}
 
 	return &rcpb.ClientUpdateResponse{}, nil
