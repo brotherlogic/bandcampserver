@@ -350,3 +350,7 @@ func (s *Server) SetCookie(ctx context.Context, req *pb.SetCookieRequest) (*pb.S
 
 	return &pb.SetCookieResponse{}, nil
 }
+
+func (s *Server) TriggerDownload(ctx context.Context, req *pb.TriggerDownloadRequest) (*pb.TriggerDownloadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "TriggerDownload not yet implemented")
+}
